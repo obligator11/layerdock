@@ -1,11 +1,14 @@
 <!doctype html>
 <html lang="en">
+
 <head>
-<meta charset="UTF-8" />
-<title>LayerDock</title>
-<link rel="stylesheet" href="style.css" />
+  <meta charset="UTF-8" />
+  <title>LayerDock</title>
+  <link rel="stylesheet" href="style.css" />
 </head>
+
 <body>
+  <div class="bg-glow"></div>
   <div class="app">
     <aside class="sidebar">
       <div class="brand">
@@ -30,7 +33,6 @@
     </aside>
 
     <main class="main">
-      <!-- Idle state: drop zone -->
       <section class="dropzone" id="dropzone">
         <div class="dropzone-inner">
           <div class="dropzone-icon">⇪</div>
@@ -40,11 +42,14 @@
         </div>
       </section>
 
-      <!-- Queue state: shown once files are added -->
       <section class="queue hidden" id="queueView">
         <header class="queue-header">
           <h2>Conversion Queue</h2>
-          <button class="btn-secondary" id="addMoreBtn">+ Add files</button>
+          <div class="queue-actions">
+            <button class="btn-ghost" id="addMoreBtn">+ Add files</button>
+            <button class="btn-secondary" id="convertAllBtn">Convert All</button>
+            <button class="btn-primary" id="downloadAllBtn" disabled>Download All</button>
+          </div>
         </header>
         <div class="queue-list" id="queueList"></div>
       </section>
@@ -53,4 +58,5 @@
 
   <script src="app.js"></script>
 </body>
+
 </html>

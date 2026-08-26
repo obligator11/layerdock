@@ -1,7 +1,7 @@
-// LayerDock frontend — Step 2: UI shell + PDF parsing wired in.
+// LayerDock frontend — per-file Convert + progress bars, Convert All / Download All.
 
 const state = {
-  queue: [], // {name, size, path, status}
+  queue: [], // {name, size, path, status, progress, outputPath}
 };
 
 function el(id) { return document.getElementById(id); }
@@ -16,6 +16,7 @@ function renderQueue() {
   const dropzone = el("dropzone");
   const queueView = el("queueView");
   const list = el("queueList");
+  const downloadAllBtn = el("downloadAllBtn");
 
   if (state.queue.length === 0) {
     dropzone.classList.remove("hidden");
@@ -27,20 +28,50 @@ function renderQueue() {
   queueView.classList.remove("hidden");
   list.innerHTML = "";
 
+  const anyDone = state.queue.some((i) => i.status === "done");
+  downloadAllBtn.disabled = !anyDone;
+
   state.queue.forEach((item, index) => {
     const row = document.createElement("div");
     row.className = "queue-item";
+
+    let statusLabel = "Queued";
+    if (item.status === "parsing") statusLabel = "Analyzing…";
+    if (item.status === "converting") statusLabel = `Converting… ${item.progress}%`;
+    if (item.status === "done") statusLabel = "Done";
+    if (item.status === "error") statusLabel = `Error: ${item.error}`;
+
     row.innerHTML = `
       <div class="queue-item-icon">PDF</div>
-      <div>
-        <div class="queue-item-name">${item.name}</div>
+      <div class="queue-item-body">
+        <div class="queue-item-top">
+          <div class="queue-item-name">${item.name}</div>
+          <div class="queue-item-status status-${item.status}">${statusLabel}</div>
+        </div>
         <div class="queue-item-meta">${formatSize(item.size)}</div>
+        <div class="progress-track">
+          <div class="progress-fill" style="width:${item.status === "done" ? 100 : item.progress}%"></div>
+        </div>
       </div>
-      <div class="queue-item-status" data-index="${index}" style="cursor:pointer;">${item.status}</div>
+      <div class="queue-item-action">
+        ${item.status === "done"
+        ? `<button class="btn-ghost btn-small" data-action="reveal" data-index="${index}">Reveal</button>`
+        : `<button class="btn-primary btn-small" data-action="convert" data-index="${index}" ${item.status === "converting" || item.status === "parsing" ? "disabled" : ""}>Convert</button>`
+      }
+      </div>
     `;
-    row.querySelector(".queue-item-status").addEventListener("click", () => parseFile(index));
     list.appendChild(row);
   });
+
+  list.querySelectorAll('[data-action="convert"]').forEach((btn) =>
+    btn.addEventListener("click", () => convertFile(parseInt(btn.dataset.index)))
+  );
+  list.querySelectorAll('[data-action="reveal"]').forEach((btn) =>
+    btn.addEventListener("click", () => {
+      const item = state.queue[parseInt(btn.dataset.index)];
+      if (item.outputPath) window.pywebview.api.open_folder(item.outputPath);
+    })
+  );
 }
 
 function addFiles(files) {
@@ -49,30 +80,79 @@ function addFiles(files) {
       name: f.name,
       size: f.size,
       path: f.path || null,
-      status: "Queued",
+      status: "queued",
+      progress: 0,
+      outputPath: null,
+      error: null,
     });
   });
   renderQueue();
 }
 
-async function parseFile(index) {
+async function convertFile(index) {
   const item = state.queue[index];
   if (!item.path) {
-    item.status = "No path (use Select PDF, not drag-drop, for now)";
+    item.status = "error";
+    item.error = "No file path (drag-drop not yet supported for conversion)";
     renderQueue();
     return;
   }
-  item.status = "Parsing…";
+  item.status = "parsing";
+  item.progress = 0;
   renderQueue();
 
-  const res = await window.pywebview.api.parse_pdf(item.path);
-  if (res.ok) {
-    item.status = `${res.page_count}p · ${res.image_count} imgs · ${res.scanned_pages} scanned`;
-  } else {
-    item.status = `Error: ${res.error}`;
+  const parseRes = await window.pywebview.api.parse_pdf(item.path);
+  if (!parseRes.ok) {
+    item.status = "error";
+    item.error = parseRes.error;
+    renderQueue();
+    return;
   }
+
+  item.status = "converting";
   renderQueue();
+  await window.pywebview.api.convert_pdf(item.path, String(index));
+  // progress/completion arrives async via onConvertProgress/onConvertDone below
 }
+
+async function convertAll() {
+  state.queue.forEach((item, index) => {
+    if (item.status === "queued" || item.status === "error") convertFile(index);
+  });
+}
+
+async function downloadAll() {
+  const doneItems = state.queue.filter((i) => i.status === "done" && i.outputPath);
+  const uniqueFolders = [...new Set(doneItems.map((i) => i.outputPath))];
+  for (const path of uniqueFolders) {
+    await window.pywebview.api.open_folder(path);
+  }
+}
+
+// Called from Python via evaluate_js during conversion
+window.onConvertProgress = (jobId, pct) => {
+  const item = state.queue[parseInt(jobId)];
+  if (!item) return;
+  item.progress = pct;
+  renderQueue();
+};
+
+window.onConvertDone = (jobId, outputPath) => {
+  const item = state.queue[parseInt(jobId)];
+  if (!item) return;
+  item.status = "done";
+  item.progress = 100;
+  item.outputPath = outputPath;
+  renderQueue();
+};
+
+window.onConvertError = (jobId, error) => {
+  const item = state.queue[parseInt(jobId)];
+  if (!item) return;
+  item.status = "error";
+  item.error = error;
+  renderQueue();
+};
 
 async function checkBackend() {
   const dot = el("backendStatus");
@@ -99,6 +179,8 @@ async function pickFiles() {
 function wireEvents() {
   el("selectFilesBtn").addEventListener("click", pickFiles);
   el("addMoreBtn").addEventListener("click", pickFiles);
+  el("convertAllBtn").addEventListener("click", convertAll);
+  el("downloadAllBtn").addEventListener("click", downloadAll);
 
   document.querySelectorAll(".nav-item").forEach((btn) => {
     btn.addEventListener("click", () => {
