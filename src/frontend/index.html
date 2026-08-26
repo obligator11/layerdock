@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>LayerDock</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="brand">
+        <span class="brand-mark">◆</span>
+        <span class="brand-name">LayerDock</span>
+      </div>
+      <nav class="nav">
+        <button class="nav-item active" data-view="convert">
+          <span class="nav-icon">⇪</span> Convert
+        </button>
+        <button class="nav-item" data-view="history">
+          <span class="nav-icon">⟲</span> History
+        </button>
+        <button class="nav-item" data-view="settings">
+          <span class="nav-icon">⚙</span> Settings
+        </button>
+      </nav>
+      <div class="sidebar-footer">
+        <span class="status-dot" id="backendStatus"></span>
+        <span id="backendStatusText">Checking backend…</span>
+      </div>
+    </aside>
+
+    <main class="main">
+      <!-- Idle state: drop zone -->
+      <section class="dropzone" id="dropzone">
+        <div class="dropzone-inner">
+          <div class="dropzone-icon">⇪</div>
+          <h1>Drop PDFs to convert</h1>
+          <p>Pixel-perfect PDF → editable DOCX, fully offline.</p>
+          <button class="btn-primary" id="selectFilesBtn">Select PDF files</button>
+        </div>
+      </section>
+
+      <!-- Queue state: shown once files are added -->
+      <section class="queue hidden" id="queueView">
+        <header class="queue-header">
+          <h2>Conversion Queue</h2>
+          <button class="btn-secondary" id="addMoreBtn">+ Add files</button>
+        </header>
+        <div class="queue-list" id="queueList"></div>
+      </section>
+    </main>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
