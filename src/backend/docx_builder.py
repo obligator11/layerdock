@@ -6,7 +6,7 @@ from docx.shared import Emu
 from docx.oxml import parse_xml
 from docx.oxml.ns import nsdecls
 
-from backend.pdf_parser import parse_pdf, extract_image_bytes
+from backend.pdf_parser import parse_pdf
 
 EMU_PER_PT = 12700
 _next_id = [1]
@@ -139,13 +139,10 @@ def build_docx(pdf_path: str, output_path: str, progress_cb=None) -> dict:
 
         anchor_paragraph = doc.add_paragraph()
 
-        # Images (raster + rasterized vector graphics) first, text drawn after
+        # Images (raster + rasterized vector graphics) first, text drawn on top
         for img in page["images"]:
             try:
-                if img.get("kind") == "vector":
-                    img_bytes = img["raw_bytes"]
-                else:
-                    img_bytes = extract_image_bytes(pdf_path, img["xref"])
+                img_bytes = img["raw_bytes"]
                 image_part, rel_id = anchor_paragraph.part.get_or_add_image(io.BytesIO(img_bytes))
                 x0, y0, x1, y1 = img["bbox"]
                 run_elem = _picture_anchor_xml(x0, y0, x1 - x0, y1 - y0, rel_id)

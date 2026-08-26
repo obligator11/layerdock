@@ -20,11 +20,8 @@ def _rects_overlap_ratio(a, b):
 
 
 def _get_vector_regions(page, min_area=150, pad=4):
-    """
-    Cluster PDF vector drawing ops (lines/fills/curves — how charts and
-    diagrams are usually built) into bounding boxes so each cluster can
-    be rasterized as one image.
-    """
+    """Cluster PDF vector drawing ops (how charts/diagrams are usually
+    built) into bounding boxes so each cluster can be rasterized."""
     try:
         drawings = page.get_drawings()
     except Exception:
@@ -66,49 +63,46 @@ def parse_pdf(path: str) -> dict:
         page_dict = page.get_text("dict")
 
         text_blocks = []
-        char_count = 0
-        for block in page_dict.get("blocks", []):
-            if block.get("type") != 0:
-                continue
-            for line in block.get("lines", []):
-                for span in line.get("spans", []):
-                    text = span.get("text", "")
-                    if not text.strip():
-                        continue
-                    char_count += len(text)
-                    text_blocks.append({
-                        "bbox": list(span["bbox"]),
-                        "text": text,
-                        "font": span.get("font", ""),
-                        "size": round(span.get("size", 0), 2),
-                        "color": _color_to_rgb(span.get("color", 0)),
-                        "flags": span.get("flags", 0),
-                    })
-
-        # 1. Raster images (embedded photos/logos)
         images = []
-        for img in page.get_images(full=True):
-            xref = img[0]
-            try:
-                rects = page.get_image_rects(xref)
-            except Exception:
-                rects = []
-            base_image = doc.extract_image(xref)
-            for rect in rects:
+        char_count = 0
+
+        for block in page_dict.get("blocks", []):
+            btype = block.get("type")
+
+            if btype == 0:  # text block
+                for line in block.get("lines", []):
+                    for span in line.get("spans", []):
+                        text = span.get("text", "")
+                        if not text.strip():
+                            continue
+                        char_count += len(text)
+                        text_blocks.append({
+                            "bbox": list(span["bbox"]),
+                            "text": text,
+                            "font": span.get("font", ""),
+                            "size": round(span.get("size", 0), 2),
+                            "color": _color_to_rgb(span.get("color", 0)),
+                            "flags": span.get("flags", 0),
+                        })
+
+            elif btype == 1:  # image block — bbox here is already correctly
+                                # transformed/positioned, unlike xref-based lookup
+                img_bytes = block.get("image")
+                if not img_bytes:
+                    continue
                 images.append({
-                    "bbox": [rect.x0, rect.y0, rect.x1, rect.y1],
+                    "bbox": list(block["bbox"]),
                     "kind": "raster",
-                    "xref": xref,
-                    "ext": base_image.get("ext", "png"),
-                    "width": base_image.get("width", 0),
-                    "height": base_image.get("height", 0),
+                    "raw_bytes": img_bytes,
+                    "width": block.get("width", 0),
+                    "height": block.get("height", 0),
                 })
 
-        # 2. Vector graphics (charts, diagrams, drawn shapes) — rasterize
+        # Vector graphics (charts/diagrams not captured as image blocks above)
         for region in _get_vector_regions(page):
             rbbox = [region.x0, region.y0, region.x1, region.y1]
             if any(_rects_overlap_ratio(im["bbox"], rbbox) > 0.6 for im in images):
-                continue  # already covered by a raster image
+                continue  # already covered by an image block
             try:
                 mat = fitz.Matrix(150 / 72, 150 / 72)  # render at 150dpi
                 pix = page.get_pixmap(matrix=mat, clip=region)
@@ -134,10 +128,3 @@ def parse_pdf(path: str) -> dict:
     result = {"page_count": doc.page_count, "pages": pages_out}
     doc.close()
     return result
-
-
-def extract_image_bytes(path: str, xref: int) -> bytes:
-    doc = fitz.open(path)
-    base_image = doc.extract_image(xref)
-    doc.close()
-    return base_image["image"]
