@@ -38,3 +38,18 @@ class Api:
     def ping(self):
         # simple sanity check the JS<->Python bridge is alive
         return {"ok": True, "message": "LayerDock backend is running"}
+
+    def parse_pdf(self, path):
+        from backend.pdf_parser import parse_pdf
+        try:
+            result = parse_pdf(path)
+            total_images = sum(len(p["images"]) for p in result["pages"])
+            scanned_pages = sum(1 for p in result["pages"] if p["is_scanned"])
+            return {
+                "ok": True,
+                "page_count": result["page_count"],
+                "image_count": total_images,
+                "scanned_pages": scanned_pages,
+            }
+        except Exception as e:
+            return {"ok": False, "error": str(e)}

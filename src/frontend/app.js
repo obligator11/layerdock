@@ -1,9 +1,7 @@
-// LayerDock frontend — Step 1: UI shell wired to the Python bridge.
-// Real conversion kicks off in later steps; for now selecting files
-// just populates the visual queue with a "queued" status.
+// LayerDock frontend — Step 2: UI shell + PDF parsing wired in.
 
 const state = {
-  queue: [], // {name, size, status}
+  queue: [], // {name, size, path, status}
 };
 
 function el(id) { return document.getElementById(id); }
@@ -29,7 +27,7 @@ function renderQueue() {
   queueView.classList.remove("hidden");
   list.innerHTML = "";
 
-  state.queue.forEach((item) => {
+  state.queue.forEach((item, index) => {
     const row = document.createElement("div");
     row.className = "queue-item";
     row.innerHTML = `
@@ -38,16 +36,41 @@ function renderQueue() {
         <div class="queue-item-name">${item.name}</div>
         <div class="queue-item-meta">${formatSize(item.size)}</div>
       </div>
-      <div class="queue-item-status">${item.status}</div>
+      <div class="queue-item-status" data-index="${index}" style="cursor:pointer;">${item.status}</div>
     `;
+    row.querySelector(".queue-item-status").addEventListener("click", () => parseFile(index));
     list.appendChild(row);
   });
 }
 
 function addFiles(files) {
   files.forEach((f) => {
-    state.queue.push({ name: f.name, size: f.size, status: "Queued" });
+    state.queue.push({
+      name: f.name,
+      size: f.size,
+      path: f.path || null,
+      status: "Queued",
+    });
   });
+  renderQueue();
+}
+
+async function parseFile(index) {
+  const item = state.queue[index];
+  if (!item.path) {
+    item.status = "No path (use Select PDF, not drag-drop, for now)";
+    renderQueue();
+    return;
+  }
+  item.status = "Parsing…";
+  renderQueue();
+
+  const res = await window.pywebview.api.parse_pdf(item.path);
+  if (res.ok) {
+    item.status = `${res.page_count}p · ${res.image_count} imgs · ${res.scanned_pages} scanned`;
+  } else {
+    item.status = `Error: ${res.error}`;
+  }
   renderQueue();
 }
 
@@ -77,7 +100,6 @@ function wireEvents() {
   el("selectFilesBtn").addEventListener("click", pickFiles);
   el("addMoreBtn").addEventListener("click", pickFiles);
 
-  // Sidebar nav (views beyond "Convert" are stubs for now)
   document.querySelectorAll(".nav-item").forEach((btn) => {
     btn.addEventListener("click", () => {
       document.querySelectorAll(".nav-item").forEach((b) => b.classList.remove("active"));
@@ -85,7 +107,6 @@ function wireEvents() {
     });
   });
 
-  // Native OS drag-and-drop onto the window
   const dropzone = el("dropzone");
   ["dragenter", "dragover"].forEach((evt) =>
     dropzone.addEventListener(evt, (e) => {
