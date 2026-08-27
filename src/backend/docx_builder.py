@@ -4,7 +4,7 @@ from xml.sax.saxutils import escape
 from docx import Document
 from docx.shared import Emu
 from docx.oxml import parse_xml
-from docx.oxml.ns import nsdecls
+from docx.oxml.ns import nsdecls, qn
 
 from backend.pdf_parser import parse_pdf
 
@@ -18,6 +18,23 @@ def _pt_to_emu(pt):
 
 def _rgb_hex(rgb):
     return "%02X%02X%02X" % tuple(rgb)
+
+
+def _embed_image_get_relid(paragraph, img_bytes):
+    """
+    Register the image with the document via python-docx's public API
+    (run.add_picture — reliable across versions, unlike the private
+    part-level helpers we tried before), then discard the inline run it
+    creates. We only need the resulting relationship id so we can draw
+    our own absolutely-positioned anchor instead of an inline picture.
+    """
+    run = paragraph.add_run()
+    run.add_picture(io.BytesIO(img_bytes))
+    drawing = run._element.find(qn('w:drawing'))
+    blip = drawing.find('.//' + qn('a:blip'))
+    rel_id = blip.get(qn('r:embed'))
+    paragraph._p.remove(run._element)
+    return rel_id
 
 
 def _textbox_xml(x_pt, y_pt, w_pt, h_pt, text, font, size_pt, color_rgb):
@@ -86,6 +103,7 @@ def _picture_anchor_xml(x_pt, y_pt, w_pt, h_pt, rel_id):
     shape_id = _next_id[0]
     x, y = _pt_to_emu(x_pt), _pt_to_emu(y_pt)
     cx, cy = max(_pt_to_emu(w_pt), 1), max(_pt_to_emu(h_pt), 1)
+    rel_id = escape(str(rel_id))
 
     xml = f"""
     <w:r {nsdecls('w')}>
@@ -142,12 +160,14 @@ def build_docx(pdf_path: str, output_path: str, progress_cb=None) -> dict:
         # Images (raster + rasterized vector graphics) first, text drawn on top
         for img in page["images"]:
             try:
-                img_bytes = img["raw_bytes"]
-                image_part, rel_id = anchor_paragraph.part.get_or_add_image(io.BytesIO(img_bytes))
+                rel_id = _embed_image_get_relid(anchor_paragraph, img["raw_bytes"])
                 x0, y0, x1, y1 = img["bbox"]
                 run_elem = _picture_anchor_xml(x0, y0, x1 - x0, y1 - y0, rel_id)
                 anchor_paragraph._p.append(run_elem)
-            except Exception:
+            except Exception as e:
+                import traceback
+                print(f"[docx_builder] FAILED to embed image on page {page['number']}: {e}")
+                traceback.print_exc()
                 continue
 
         for block in page["text_blocks"]:
