@@ -12,7 +12,7 @@
   <div class="app">
     <aside class="sidebar">
       <div class="brand">
-        <span class="brand-mark">◆</span>
+        <img class="brand-logo" src="assets/logo.png" alt="" onerror="this.style.display='none'" />
         <span class="brand-name">LayerDock</span>
       </div>
       <nav class="nav">
@@ -33,25 +33,65 @@
     </aside>
 
     <main class="main">
-      <section class="dropzone" id="dropzone">
-        <div class="dropzone-inner">
-          <div class="dropzone-icon">⇪</div>
-          <h1>Drop PDFs to convert</h1>
-          <p>Pixel-perfect PDF → editable DOCX, fully offline.</p>
-          <button class="btn-primary" id="selectFilesBtn">Select PDF files</button>
-        </div>
+      <section class="view" id="convertView">
+        <section class="dropzone" id="dropzone">
+          <div class="dropzone-inner">
+            <div class="dropzone-icon">⇪</div>
+            <h1>Drop PDFs to convert</h1>
+            <p>Pixel-perfect PDF → editable DOCX, fully offline.</p>
+            <button class="btn-primary" id="selectFilesBtn">Select PDF files</button>
+          </div>
+        </section>
+
+        <section class="queue hidden" id="queueView">
+          <header class="queue-header">
+            <h2>Conversion Queue</h2>
+            <div class="queue-actions">
+              <button class="btn-ghost" id="addMoreBtn">+ Add files</button>
+              <button class="btn-secondary" id="convertAllBtn">Convert All</button>
+              <button class="btn-primary" id="downloadAllBtn" disabled>Download All</button>
+            </div>
+          </header>
+          <div class="queue-list" id="queueList"></div>
+        </section>
       </section>
 
-      <section class="queue hidden" id="queueView">
+      <section class="view hidden" id="historyView">
         <header class="queue-header">
-          <h2>Conversion Queue</h2>
-          <div class="queue-actions">
-            <button class="btn-ghost" id="addMoreBtn">+ Add files</button>
-            <button class="btn-secondary" id="convertAllBtn">Convert All</button>
-            <button class="btn-primary" id="downloadAllBtn" disabled>Download All</button>
-          </div>
+          <h2>Conversion History</h2>
+          <button class="btn-ghost" id="clearHistoryBtn">Clear history</button>
         </header>
-        <div class="queue-list" id="queueList"></div>
+        <div class="history-list" id="historyList"></div>
+      </section>
+
+      <section class="view hidden" id="settingsView">
+        <header class="queue-header">
+          <h2>Settings</h2>
+        </header>
+
+        <div class="settings-card">
+          <div class="settings-row">
+            <div>
+              <div class="settings-label">Default output folder</div>
+              <div class="settings-value" id="outputFolderValue">Automatic — a "LayerDock Output" folder next to each
+                source PDF</div>
+            </div>
+            <div class="settings-row-actions">
+              <button class="btn-secondary btn-small" id="changeOutputFolderBtn">Change</button>
+              <button class="btn-ghost btn-small" id="resetOutputFolderBtn">Reset</button>
+            </div>
+          </div>
+
+          <div class="settings-row">
+            <div>
+              <div class="settings-label">App data &amp; history database</div>
+              <div class="settings-value" id="dataDirValue">—</div>
+            </div>
+            <div class="settings-row-actions">
+              <button class="btn-secondary btn-small" id="openDataFolderBtn">Open folder</button>
+            </div>
+          </div>
+        </div>
       </section>
     </main>
   </div>

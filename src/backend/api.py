@@ -5,10 +5,13 @@ import subprocess
 import sys
 import webview
 
+from backend import db
+
 
 class Api:
     def __init__(self):
         self._window = None
+        db.init_db()
 
     def set_window(self, window):
         self._window = window
@@ -46,21 +49,26 @@ class Api:
             return {"ok": False, "error": str(e)}
 
     def convert_pdf(self, path, job_id):
-        """Kicks off conversion in a background thread and returns immediately.
-        Progress/completion is pushed to JS via evaluate_js callbacks."""
         threading.Thread(target=self._convert_worker, args=(path, job_id), daemon=True).start()
         return {"ok": True, "started": True}
 
+    def _resolve_output_dir(self, source_path):
+        override = db.get_setting("output_folder_override")
+        if override and os.path.isdir(override):
+            return override
+        output_dir = os.path.join(os.path.dirname(source_path), "LayerDock Output")
+        try:
+            os.makedirs(output_dir, exist_ok=True)
+        except Exception:
+            output_dir = os.path.dirname(source_path)
+        return output_dir
+
     def _convert_worker(self, path, job_id):
         from backend.docx_builder import build_docx
+        source_name = os.path.basename(path)
         try:
-            output_dir = os.path.join(os.path.dirname(path), "LayerDock Output")
-            try:
-                os.makedirs(output_dir, exist_ok=True)
-            except Exception:
-                output_dir = os.path.dirname(path)  # fallback if not writable
-
-            base = os.path.splitext(os.path.basename(path))[0]
+            output_dir = self._resolve_output_dir(path)
+            base = os.path.splitext(source_name)[0]
             output_path = os.path.join(output_dir, base + ".docx")
 
             def progress_cb(current, total):
@@ -70,16 +78,19 @@ class Api:
                 )
 
             result = build_docx(path, output_path, progress_cb=progress_cb)
+            db.add_history_entry(
+                source_name, path, result["output_path"], result["page_count"], "done",
+            )
             self._window.evaluate_js(
                 f"window.onConvertDone({json.dumps(job_id)}, {json.dumps(result['output_path'])})"
             )
         except Exception as e:
+            db.add_history_entry(source_name, path, None, None, "error", str(e))
             self._window.evaluate_js(
                 f"window.onConvertError({json.dumps(job_id)}, {json.dumps(str(e))})"
             )
 
     def open_folder(self, path):
-        """Reveal a folder in the OS file explorer — used by 'Download All'."""
         try:
             folder = path if os.path.isdir(path) else os.path.dirname(path)
             if sys.platform == "win32":
@@ -91,3 +102,47 @@ class Api:
             return {"ok": True}
         except Exception as e:
             return {"ok": False, "error": str(e)}
+
+    # --- History ---
+
+    def get_history(self):
+        try:
+            return {"ok": True, "items": db.get_history()}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    def clear_history(self):
+        try:
+            db.clear_history()
+            return {"ok": True}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    # --- Settings ---
+
+    def get_settings(self):
+        try:
+            return {
+                "ok": True,
+                "output_folder_override": db.get_setting("output_folder_override"),
+                "data_dir": db.get_app_data_dir(),
+            }
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    def choose_output_folder_override(self):
+        if self._window is None:
+            return {"ok": False, "error": "no window"}
+        result = self._window.create_file_dialog(webview.FileDialog.FOLDER)
+        if not result:
+            return {"ok": False, "cancelled": True}
+        folder = result[0]
+        db.set_setting("output_folder_override", folder)
+        return {"ok": True, "output_folder_override": folder}
+
+    def reset_output_folder_override(self):
+        db.delete_setting("output_folder_override")
+        return {"ok": True}
+
+    def open_data_folder(self):
+        return self.open_folder(db.get_app_data_dir())

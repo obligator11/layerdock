@@ -1,4 +1,4 @@
-// LayerDock frontend — per-file Convert + progress bars, Convert All / Download All.
+// LayerDock frontend — Convert / History / Settings.
 
 const state = {
   queue: [], // {name, size, path, status, progress, outputPath}
@@ -11,6 +11,17 @@ function formatSize(bytes) {
   if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + " KB";
   return (bytes / (1024 * 1024)).toFixed(1) + " MB";
 }
+
+function formatDate(iso) {
+  try {
+    const d = new Date(iso);
+    return d.toLocaleString();
+  } catch (e) {
+    return iso;
+  }
+}
+
+/* ---------- Convert view ---------- */
 
 function renderQueue() {
   const dropzone = el("dropzone");
@@ -112,7 +123,6 @@ async function convertFile(index) {
   item.status = "converting";
   renderQueue();
   await window.pywebview.api.convert_pdf(item.path, String(index));
-  // progress/completion arrives async via onConvertProgress/onConvertDone below
 }
 
 async function convertAll() {
@@ -129,7 +139,6 @@ async function downloadAll() {
   }
 }
 
-// Called from Python via evaluate_js during conversion
 window.onConvertProgress = (jobId, pct) => {
   const item = state.queue[parseInt(jobId)];
   if (!item) return;
@@ -154,6 +163,75 @@ window.onConvertError = (jobId, error) => {
   renderQueue();
 };
 
+/* ---------- History view ---------- */
+
+async function loadHistory() {
+  const list = el("historyList");
+  list.innerHTML = `<div class="empty-note">Loading…</div>`;
+  const res = await window.pywebview.api.get_history();
+  if (!res.ok) {
+    list.innerHTML = `<div class="empty-note">Failed to load history: ${res.error}</div>`;
+    return;
+  }
+  if (res.items.length === 0) {
+    list.innerHTML = `<div class="empty-note">No conversions yet.</div>`;
+    return;
+  }
+  list.innerHTML = "";
+  res.items.forEach((item) => {
+    const row = document.createElement("div");
+    row.className = "queue-item";
+    const ok = item.status === "done";
+    row.innerHTML = `
+      <div class="queue-item-icon">PDF</div>
+      <div class="queue-item-body">
+        <div class="queue-item-top">
+          <div class="queue-item-name">${item.source_name || "Unknown"}</div>
+          <div class="queue-item-status ${ok ? "status-done" : "status-error"}">
+            ${ok ? `${item.page_count || "?"} pages` : `Error`}
+          </div>
+        </div>
+        <div class="queue-item-meta">${formatDate(item.created_at)}${ok ? "" : ` · ${item.error || ""}`}</div>
+      </div>
+      <div class="queue-item-action">
+        ${ok ? `<button class="btn-ghost btn-small" data-reveal="${item.output_path}">Reveal</button>` : ""}
+      </div>
+    `;
+    list.appendChild(row);
+  });
+  list.querySelectorAll("[data-reveal]").forEach((btn) =>
+    btn.addEventListener("click", () => window.pywebview.api.open_folder(btn.dataset.reveal))
+  );
+}
+
+async function clearHistory() {
+  await window.pywebview.api.clear_history();
+  loadHistory();
+}
+
+/* ---------- Settings view ---------- */
+
+async function loadSettings() {
+  const res = await window.pywebview.api.get_settings();
+  if (!res.ok) return;
+  el("outputFolderValue").textContent = res.output_folder_override
+    ? res.output_folder_override
+    : 'Automatic — a "LayerDock Output" folder next to each source PDF';
+  el("dataDirValue").textContent = res.data_dir;
+}
+
+async function changeOutputFolder() {
+  const res = await window.pywebview.api.choose_output_folder_override();
+  if (res.ok) loadSettings();
+}
+
+async function resetOutputFolder() {
+  await window.pywebview.api.reset_output_folder_override();
+  loadSettings();
+}
+
+/* ---------- Shared ---------- */
+
 async function checkBackend() {
   const dot = el("backendStatus");
   const text = el("backendStatusText");
@@ -176,16 +254,28 @@ async function pickFiles() {
   if (picked && picked.length) addFiles(picked);
 }
 
+function switchView(viewName) {
+  document.querySelectorAll(".view").forEach((v) => v.classList.add("hidden"));
+  el(viewName + "View").classList.remove("hidden");
+  if (viewName === "history") loadHistory();
+  if (viewName === "settings") loadSettings();
+}
+
 function wireEvents() {
   el("selectFilesBtn").addEventListener("click", pickFiles);
   el("addMoreBtn").addEventListener("click", pickFiles);
   el("convertAllBtn").addEventListener("click", convertAll);
   el("downloadAllBtn").addEventListener("click", downloadAll);
+  el("clearHistoryBtn").addEventListener("click", clearHistory);
+  el("changeOutputFolderBtn").addEventListener("click", changeOutputFolder);
+  el("resetOutputFolderBtn").addEventListener("click", resetOutputFolder);
+  el("openDataFolderBtn").addEventListener("click", () => window.pywebview.api.open_data_folder());
 
   document.querySelectorAll(".nav-item").forEach((btn) => {
     btn.addEventListener("click", () => {
       document.querySelectorAll(".nav-item").forEach((b) => b.classList.remove("active"));
       btn.classList.add("active");
+      switchView(btn.dataset.view);
     });
   });
 

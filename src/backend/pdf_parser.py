@@ -1,14 +1,3 @@
-"""
-PDF parsing engine.
-
-Extracts positioned TEXT LINES (not individual spans) plus rasterized
-regions for anything visual: embedded images, and vector-drawn graphics
-(charts/diagrams/tables). Grouping by line — rather than placing every
-span in its own separate floating textbox — keeps text on a straight
-baseline. Oversized single shapes (full-page backgrounds/borders) are
-excluded before clustering so they can't "bridge" into nearby charts and
-inflate them into a page-sized image.
-"""
 import fitz  # PyMuPDF
 
 
