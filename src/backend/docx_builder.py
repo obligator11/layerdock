@@ -21,13 +21,9 @@ def _rgb_hex(rgb):
 
 
 def _embed_image_get_relid(paragraph, img_bytes):
-    """
-    Register the image with the document via python-docx's public API
-    (run.add_picture — reliable across versions, unlike the private
-    part-level helpers we tried before), then discard the inline run it
-    creates. We only need the resulting relationship id so we can draw
-    our own absolutely-positioned anchor instead of an inline picture.
-    """
+    """Register an image via python-docx's public API (run.add_picture),
+    then discard the inline run it creates — we only need the resulting
+    relationship id to draw our own absolutely positioned anchor."""
     run = paragraph.add_run()
     run.add_picture(io.BytesIO(img_bytes))
     drawing = run._element.find(qn('w:drawing'))
@@ -37,15 +33,39 @@ def _embed_image_get_relid(paragraph, img_bytes):
     return rel_id
 
 
-def _textbox_xml(x_pt, y_pt, w_pt, h_pt, text, font, size_pt, color_rgb):
+def _run_xml(run):
+    """Build one <w:r> for a single run inside a line's textbox."""
+    half_pts = max(int(run["size"] * 2), 2)
+    color = _rgb_hex(run["color"])
+    safe_text = escape(run["text"])
+    safe_font = escape(run["font"] or "Calibri")
+    font_lower = (run["font"] or "").lower()
+    bold = "bold" in font_lower or bool(run.get("flags", 0) & 16)
+    italic = "italic" in font_lower or "oblique" in font_lower or bool(run.get("flags", 0) & 2)
+
+    b_tag = "<w:b/>" if bold else ""
+    i_tag = "<w:i/>" if italic else ""
+
+    return f"""
+      <w:r>
+        <w:rPr>
+          <w:rFonts w:ascii="{safe_font}" w:hAnsi="{safe_font}"/>
+          {b_tag}{i_tag}
+          <w:sz w:val="{half_pts}"/>
+          <w:color w:val="{color}"/>
+        </w:rPr>
+        <w:t xml:space="preserve">{safe_text}</w:t>
+      </w:r>
+    """
+
+
+def _line_textbox_xml(x_pt, y_pt, w_pt, h_pt, runs):
     _next_id[0] += 1
     shape_id = _next_id[0]
     x, y = _pt_to_emu(x_pt), _pt_to_emu(y_pt)
     cx, cy = max(_pt_to_emu(w_pt), 1), max(_pt_to_emu(h_pt), 1)
-    half_pts = max(int(size_pt * 2), 2)
-    color = _rgb_hex(color_rgb)
-    safe_text = escape(text)
-    safe_font = escape(font or "Calibri")
+
+    runs_xml = "".join(_run_xml(r) for r in runs)
 
     xml = f"""
     <w:r {nsdecls('w')}>
@@ -58,7 +78,7 @@ def _textbox_xml(x_pt, y_pt, w_pt, h_pt, text, font, size_pt, color_rgb):
           <wp:positionV relativeFrom="page"><wp:posOffset>{y}</wp:posOffset></wp:positionV>
           <wp:extent cx="{cx}" cy="{cy}"/>
           <wp:wrapNone/>
-          <wp:docPr id="{shape_id}" name="TextBox{shape_id}"/>
+          <wp:docPr id="{shape_id}" name="Line{shape_id}"/>
           <wp:cNvGraphicFramePr/>
           <a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
             <a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
@@ -74,14 +94,7 @@ def _textbox_xml(x_pt, y_pt, w_pt, h_pt, text, font, size_pt, color_rgb):
                   <w:txbxContent>
                     <w:p>
                       <w:pPr><w:spacing w:before="0" w:after="0" w:line="240" w:lineRule="auto"/></w:pPr>
-                      <w:r>
-                        <w:rPr>
-                          <w:rFonts w:ascii="{safe_font}" w:hAnsi="{safe_font}"/>
-                          <w:sz w:val="{half_pts}"/>
-                          <w:color w:val="{color}"/>
-                        </w:rPr>
-                        <w:t xml:space="preserve">{safe_text}</w:t>
-                      </w:r>
+                      {runs_xml}
                     </w:p>
                   </w:txbxContent>
                 </wps:txbx>
@@ -157,7 +170,6 @@ def build_docx(pdf_path: str, output_path: str, progress_cb=None) -> dict:
 
         anchor_paragraph = doc.add_paragraph()
 
-        # Images (raster + rasterized vector graphics) first, text drawn on top
         for img in page["images"]:
             try:
                 rel_id = _embed_image_get_relid(anchor_paragraph, img["raw_bytes"])
@@ -170,12 +182,11 @@ def build_docx(pdf_path: str, output_path: str, progress_cb=None) -> dict:
                 traceback.print_exc()
                 continue
 
-        for block in page["text_blocks"]:
-            x0, y0, x1, y1 = block["bbox"]
-            run_elem = _textbox_xml(
-                x0, y0, max(x1 - x0, 4), max(y1 - y0, block["size"] * 1.3),
-                block["text"], block["font"], block["size"], block["color"],
-            )
+        for line in page["text_lines"]:
+            x0, y0, x1, y1 = line["bbox"]
+            max_size = max((r["size"] for r in line["runs"]), default=10)
+            h = max(y1 - y0, max_size * 1.25)
+            run_elem = _line_textbox_xml(x0, y0, max(x1 - x0, 4), h, line["runs"])
             anchor_paragraph._p.append(run_elem)
 
         if progress_cb:
