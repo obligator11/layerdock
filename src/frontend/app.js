@@ -49,7 +49,12 @@ function renderQueue() {
     let statusLabel = "Queued";
     if (item.status === "parsing") statusLabel = "Analyzing…";
     if (item.status === "converting") statusLabel = `Converting… ${item.progress}%`;
-    if (item.status === "done") statusLabel = "Done";
+    if (item.status === "done") {
+      statusLabel = "Done";
+      if (item.flaggedPages && item.flaggedPages.length) {
+        statusLabel = `Done · review pages ${item.flaggedPages.join(", ")}`;
+      }
+    }
     if (item.status === "error") statusLabel = `Error: ${item.error}`;
 
     row.innerHTML = `
@@ -146,12 +151,13 @@ window.onConvertProgress = (jobId, pct) => {
   renderQueue();
 };
 
-window.onConvertDone = (jobId, outputPath) => {
+window.onConvertDone = (jobId, outputPath, flaggedPages) => {
   const item = state.queue[parseInt(jobId)];
   if (!item) return;
   item.status = "done";
   item.progress = 100;
   item.outputPath = outputPath;
+  item.flaggedPages = flaggedPages || [];
   renderQueue();
 };
 
@@ -213,11 +219,31 @@ async function clearHistory() {
 
 async function loadSettings() {
   const res = await window.pywebview.api.get_settings();
-  if (!res.ok) return;
-  el("outputFolderValue").textContent = res.output_folder_override
-    ? res.output_folder_override
-    : 'Automatic — a "LayerDock Output" folder next to each source PDF';
-  el("dataDirValue").textContent = res.data_dir;
+  if (res.ok) {
+    el("outputFolderValue").textContent = res.output_folder_override
+      ? res.output_folder_override
+      : 'Automatic — a "LayerDock Output" folder next to each source PDF';
+    el("dataDirValue").textContent = res.data_dir;
+  }
+  checkOcrStatus();
+}
+
+async function checkOcrStatus() {
+  const el2 = el("ocrStatusValue");
+  el2.textContent = "Checking…";
+  try {
+    const res = await window.pywebview.api.check_ocr();
+    if (res.available) {
+      el2.textContent = `Available (Tesseract ${res.version})`;
+      el2.style.color = "var(--success)";
+    } else {
+      el2.textContent = res.error || "Not found — scanned PDFs will convert without text recognition.";
+      el2.style.color = "var(--warn)";
+    }
+  } catch (e) {
+    el2.textContent = `Bridge error: ${e.message || e}`;
+    el2.style.color = "var(--danger)";
+  }
 }
 
 async function changeOutputFolder() {
@@ -270,6 +296,7 @@ function wireEvents() {
   el("changeOutputFolderBtn").addEventListener("click", changeOutputFolder);
   el("resetOutputFolderBtn").addEventListener("click", resetOutputFolder);
   el("openDataFolderBtn").addEventListener("click", () => window.pywebview.api.open_data_folder());
+  el("recheckOcrBtn").addEventListener("click", checkOcrStatus);
 
   document.querySelectorAll(".nav-item").forEach((btn) => {
     btn.addEventListener("click", () => {

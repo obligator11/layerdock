@@ -160,8 +160,13 @@ def build_docx(pdf_path: str, output_path: str, progress_cb=None) -> dict:
     _next_id[0] = 1
     parsed = parse_pdf(pdf_path)
     doc = Document()
+    flagged_pages = []  # pages where OCR confidence was low enough to warrant review
 
     for i, page in enumerate(parsed["pages"]):
+        conf = page.get("ocr_confidence")
+        if conf is not None and conf < 60:
+            flagged_pages.append(page["number"])
+
         section = doc.sections[0] if i == 0 else doc.add_section()
         section.page_width = Emu(_pt_to_emu(page["width"]))
         section.page_height = Emu(_pt_to_emu(page["height"]))
@@ -193,4 +198,8 @@ def build_docx(pdf_path: str, output_path: str, progress_cb=None) -> dict:
             progress_cb(i + 1, parsed["page_count"])
 
     doc.save(output_path)
-    return {"page_count": parsed["page_count"], "output_path": output_path}
+    return {
+        "page_count": parsed["page_count"],
+        "output_path": output_path,
+        "flagged_pages": flagged_pages,
+    }

@@ -1,5 +1,7 @@
 import fitz  # PyMuPDF
 
+from backend import ocr_engine
+
 
 def _color_to_rgb(color_int):
     r = (color_int >> 16) & 255
@@ -9,7 +11,6 @@ def _color_to_rgb(color_int):
 
 
 def _rects_overlap_ratio(a, b):
-    """Fraction of rect b's area covered by rect a. a,b = [x0,y0,x1,y1]."""
     x0, y0 = max(a[0], b[0]), max(a[1], b[1])
     x1, y1 = min(a[2], b[2]), min(a[3], b[3])
     if x1 <= x0 or y1 <= y0:
@@ -19,13 +20,14 @@ def _rects_overlap_ratio(a, b):
     return inter / area_b if area_b > 0 else 0.0
 
 
+def _rect_area_ratio_to_page(bbox, page):
+    x0, y0, x1, y1 = bbox
+    area = max(x1 - x0, 0) * max(y1 - y0, 0)
+    page_area = page.rect.width * page.rect.height
+    return area / page_area if page_area > 0 else 0.0
+
+
 def _cluster_rects(rects, pad=2):
-    """
-    Connected-components clustering by PAIRWISE rect proximity — not by
-    testing against an ever-growing cluster bounding box. Only merges
-    rects that are actually close to a specific neighboring rect, so one
-    cluster can't "reach" across the page toward unrelated shapes.
-    """
     if not rects:
         return []
     n = len(rects)
@@ -79,6 +81,17 @@ def _get_vector_regions(page, min_area=150):
     # else on the page and acts as a "bridge" that clustering merges into,
     # turning "background + nearby chart" into one page-sized cluster.
     rects = [r for r in rects if (r.get_area() / page_area if page_area > 0 else 0) < 0.5]
+
+    # Also drop TINY individual shapes — dash segments from decorative
+    # dashed connector lines (e.g. arrows linking numbered sections) are
+    # each just a few square points. Left in, a chain of dash-dash-dash
+    # rects sitting close together bridges two unrelated icon clusters
+    # (and everything between them) into one oversized merged region,
+    # same mechanism as the background-bridging bug, different shape.
+    # Real icons/chart bars/table borders are all comfortably larger
+    # than this, so genuine graphics are unaffected.
+    rects = [r for r in rects if r.get_area() > 9]
+
     if not rects:
         return []
 
@@ -92,11 +105,28 @@ def _get_vector_regions(page, min_area=150):
             continue
         area_ratio = area / page_area if page_area > 0 else 0
         if count <= 3 and area_ratio > 0.2:
-            continue  # background/border/watermark, not a real graphic
+            continue
         if rect.width < 3 or rect.height < 3:
             continue
         regions.append(rect)
     return regions
+
+
+def _ocr_lines_to_text_lines(ocr_lines):
+    out = []
+    for l in ocr_lines:
+        size_pt = max((l["bbox"][3] - l["bbox"][1]) * 0.75, 6)
+        out.append({
+            "bbox": l["bbox"],
+            "runs": [{
+                "text": l["text"],
+                "font": "Calibri",
+                "size": round(size_pt, 1),
+                "color": [90, 90, 90] if l["low_confidence"] else [15, 15, 15],
+                "flags": 0,
+            }],
+        })
+    return out
 
 
 def parse_pdf(path: str) -> dict:
@@ -107,13 +137,12 @@ def parse_pdf(path: str) -> dict:
         page = doc[page_index]
         page_dict = page.get_text("dict")
 
-        raw_lines = []       # [{bbox, runs:[{text,font,size,color,flags}]}]
+        raw_lines = []
         image_block_rects = []
 
         for block in page_dict.get("blocks", []):
             btype = block.get("type")
-
-            if btype == 0:  # text block
+            if btype == 0:
                 for line in block.get("lines", []):
                     line_bbox = line.get("bbox")
                     if not line_bbox:
@@ -132,8 +161,7 @@ def parse_pdf(path: str) -> dict:
                         })
                     if runs:
                         raw_lines.append({"bbox": list(line_bbox), "runs": runs})
-
-            elif btype == 1:  # image
+            elif btype == 1:
                 bbox = block.get("bbox")
                 if bbox and (bbox[2] - bbox[0]) > 1 and (bbox[3] - bbox[1]) > 1:
                     image_block_rects.append(fitz.Rect(bbox))
@@ -151,7 +179,13 @@ def parse_pdf(path: str) -> dict:
             try:
                 clip = fitz.Rect(rbbox)
                 mat = fitz.Matrix(150 / 72, 150 / 72)
-                pix = page.get_pixmap(matrix=mat, clip=clip)
+                # alpha=True keeps empty space in the clip transparent instead
+                # of opaque white. Without this, a graphic's bounding box (e.g.
+                # a decorative dashed connector spanning a large diagonal
+                # distance) renders as a solid white rectangle that visually
+                # blocks any real text sitting inside that box but outside
+                # the actual drawn shape.
+                pix = page.get_pixmap(matrix=mat, clip=clip, alpha=True)
                 images.append({
                     "bbox": rbbox,
                     "raw_bytes": pix.tobytes("png"),
@@ -161,12 +195,6 @@ def parse_pdf(path: str) -> dict:
             except Exception:
                 continue
 
-        # Drop whole lines that sit inside ANY rasterized region — real
-        # embedded photos AND rasterized vector graphics (charts/tables) —
-        # since page.get_pixmap() bakes in whatever text sits in that clip
-        # area. Without this, chart/table labels get drawn twice: once
-        # baked into the chart image, once as a separate floating textbox
-        # slightly misaligned with it (the "wavy ghosting" artifact).
         text_lines = []
         char_count = 0
         for line in raw_lines:
@@ -175,13 +203,38 @@ def parse_pdf(path: str) -> dict:
             char_count += sum(len(r["text"]) for r in line["runs"])
             text_lines.append(line)
 
+        ocr_confidence = None
+        looks_scanned = char_count < 20 and len(images) > 0
+
+        if looks_scanned and ocr_engine.is_available():
+            # Full-page-ish images are the scan itself — OCR replaces
+            # them with real text, so drop them to avoid drawing the
+            # printed text twice (once baked into the scan, once as our
+            # overlay — the same duplicate-text bug we hit with charts).
+            full_page_images = [
+                img for img in images if _rect_area_ratio_to_page(img["bbox"], page) > 0.6
+            ]
+            if full_page_images:
+                try:
+                    mat = fitz.Matrix(250 / 72, 250 / 72)
+                    ocr_pix = page.get_pixmap(matrix=mat)
+                    ocr_result = ocr_engine.ocr_page(ocr_pix, dpi=250)
+                    if ocr_result["lines"]:
+                        images = [img for img in images if img not in full_page_images]
+                        text_lines.extend(_ocr_lines_to_text_lines(ocr_result["lines"]))
+                        char_count = sum(len(l["text"]) for l in ocr_result["lines"])
+                        ocr_confidence = ocr_result["avg_confidence"]
+                except Exception as e:
+                    print(f"[pdf_parser] OCR failed on page {page_index + 1}: {e}")
+
         pages_out.append({
             "number": page_index + 1,
             "width": page.rect.width,
             "height": page.rect.height,
             "text_lines": text_lines,
             "images": images,
-            "is_scanned": char_count < 20 and len(images) > 0,
+            "is_scanned": looks_scanned,
+            "ocr_confidence": ocr_confidence,  # None if not OCR'd
         })
 
     result = {"page_count": doc.page_count, "pages": pages_out}

@@ -1,3 +1,8 @@
+"""
+Local SQLite persistence for conversion history and app settings.
+DB lives in a per-OS app-data folder so it survives app updates and isn't
+tied to wherever the project folder happens to be.
+"""
 import os
 import sys
 import sqlite3
@@ -42,6 +47,10 @@ def init_db():
             created_at TEXT
         )
     """)
+    try:
+        conn.execute("ALTER TABLE history ADD COLUMN flagged_pages TEXT")
+    except sqlite3.OperationalError:
+        pass  # column already exists from a previous run
     conn.execute("""
         CREATE TABLE IF NOT EXISTS settings (
             key TEXT PRIMARY KEY,
@@ -52,13 +61,13 @@ def init_db():
     conn.close()
 
 
-def add_history_entry(source_name, source_path, output_path, page_count, status, error=None):
+def add_history_entry(source_name, source_path, output_path, page_count, status, error=None, flagged_pages=None):
     conn = _connect()
     conn.execute(
-        "INSERT INTO history (source_name, source_path, output_path, page_count, status, error, created_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO history (source_name, source_path, output_path, page_count, status, error, created_at, flagged_pages) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         (source_name, source_path, output_path, page_count, status, error,
-         datetime.datetime.now().isoformat(timespec="seconds")),
+         datetime.datetime.now().isoformat(timespec="seconds"), flagged_pages),
     )
     conn.commit()
     conn.close()

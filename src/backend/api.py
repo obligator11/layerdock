@@ -48,6 +48,15 @@ class Api:
         except Exception as e:
             return {"ok": False, "error": str(e)}
 
+    def check_ocr(self):
+        try:
+            from backend import ocr_engine
+            return ocr_engine.get_status()
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            return {"available": False, "error": f"check_ocr crashed: {e}"}
+
     def convert_pdf(self, path, job_id):
         threading.Thread(target=self._convert_worker, args=(path, job_id), daemon=True).start()
         return {"ok": True, "started": True}
@@ -78,11 +87,13 @@ class Api:
                 )
 
             result = build_docx(path, output_path, progress_cb=progress_cb)
+            flagged = result.get("flagged_pages", [])
             db.add_history_entry(
                 source_name, path, result["output_path"], result["page_count"], "done",
+                flagged_pages=",".join(str(p) for p in flagged) if flagged else None,
             )
             self._window.evaluate_js(
-                f"window.onConvertDone({json.dumps(job_id)}, {json.dumps(result['output_path'])})"
+                f"window.onConvertDone({json.dumps(job_id)}, {json.dumps(result['output_path'])}, {json.dumps(flagged)})"
             )
         except Exception as e:
             db.add_history_entry(source_name, path, None, None, "error", str(e))
@@ -103,8 +114,6 @@ class Api:
         except Exception as e:
             return {"ok": False, "error": str(e)}
 
-    # --- History ---
-
     def get_history(self):
         try:
             return {"ok": True, "items": db.get_history()}
@@ -117,8 +126,6 @@ class Api:
             return {"ok": True}
         except Exception as e:
             return {"ok": False, "error": str(e)}
-
-    # --- Settings ---
 
     def get_settings(self):
         try:
