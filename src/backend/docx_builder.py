@@ -1,9 +1,18 @@
+"""
+DOCX generation engine.
+
+Consumes the structured dict produced by pdf_parser.parse_pdf() and builds
+a real .docx: text lines as positioned textboxes, images/graphics as
+positioned pictures, and now TABLES as actual editable Word table objects
+— floated to their exact page position via OOXML's tblpPr, since
+python-docx has no built-in support for absolutely positioned tables.
+"""
 import io
 from xml.sax.saxutils import escape
 
 from docx import Document
-from docx.shared import Emu
-from docx.oxml import parse_xml
+from docx.shared import Emu, Pt
+from docx.oxml import parse_xml, OxmlElement
 from docx.oxml.ns import nsdecls, qn
 
 from backend.pdf_parser import parse_pdf
@@ -16,14 +25,15 @@ def _pt_to_emu(pt):
     return int(pt * EMU_PER_PT)
 
 
+def _pt_to_twips(pt):
+    return int(pt * 20)
+
+
 def _rgb_hex(rgb):
     return "%02X%02X%02X" % tuple(rgb)
 
 
 def _embed_image_get_relid(paragraph, img_bytes):
-    """Register an image via python-docx's public API (run.add_picture),
-    then discard the inline run it creates — we only need the resulting
-    relationship id to draw our own absolutely positioned anchor."""
     run = paragraph.add_run()
     run.add_picture(io.BytesIO(img_bytes))
     drawing = run._element.find(qn('w:drawing'))
@@ -34,7 +44,6 @@ def _embed_image_get_relid(paragraph, img_bytes):
 
 
 def _run_xml(run):
-    """Build one <w:r> for a single run inside a line's textbox."""
     half_pts = max(int(run["size"] * 2), 2)
     color = _rgb_hex(run["color"])
     safe_text = escape(run["text"])
@@ -156,11 +165,67 @@ def _picture_anchor_xml(x_pt, y_pt, w_pt, h_pt, rel_id):
     return parse_xml(xml)
 
 
+def _add_floating_table(doc, table_data):
+    """Build a real, editable Word table and float it to an exact page
+    position via w:tblpPr — OOXML's absolute table-positioning element,
+    which python-docx doesn't expose directly, hence the raw XML."""
+    rows, cols = table_data["rows"], table_data["cols"]
+    table = doc.add_table(rows=rows, cols=cols)
+    table.style = "Table Grid"
+
+    tbl = table._tbl
+    tblPr = tbl.tblPr
+
+    tblpPr = OxmlElement("w:tblpPr")
+    tblpPr.set(qn("w:vertAnchor"), "page")
+    tblpPr.set(qn("w:horzAnchor"), "page")
+    tblpPr.set(qn("w:tblpX"), str(_pt_to_twips(table_data["bbox"][0])))
+    tblpPr.set(qn("w:tblpY"), str(_pt_to_twips(table_data["bbox"][1])))
+    tblPr.append(tblpPr)
+
+    tblLayout = OxmlElement("w:tblLayout")
+    tblLayout.set(qn("w:type"), "fixed")
+    tblPr.append(tblLayout)
+
+    total_width_pt = sum(table_data["col_widths"])
+    tblW = OxmlElement("w:tblW")
+    tblW.set(qn("w:type"), "dxa")
+    tblW.set(qn("w:w"), str(_pt_to_twips(total_width_pt)))
+    tblPr.append(tblW)
+
+    tblGrid = tbl.find(qn("w:tblGrid"))
+    grid_cols = tblGrid.findall(qn("w:gridCol"))
+    for gc, w in zip(grid_cols, table_data["col_widths"]):
+        gc.set(qn("w:w"), str(_pt_to_twips(w)))
+
+    for r_idx, row in enumerate(table.rows):
+        trPr = row._tr.get_or_add_trPr()
+        trHeight = OxmlElement("w:trHeight")
+        trHeight.set(qn("w:val"), str(_pt_to_twips(max(table_data["row_heights"][r_idx], 10))))
+        trHeight.set(qn("w:hRule"), "atLeast")
+        trPr.append(trHeight)
+
+        for c_idx, cell in enumerate(row.cells):
+            cell.text = table_data["cells"][r_idx][c_idx]
+            tcPr = cell._tc.get_or_add_tcPr()
+            tcW = OxmlElement("w:tcW")
+            tcW.set(qn("w:type"), "dxa")
+            tcW.set(qn("w:w"), str(_pt_to_twips(table_data["col_widths"][c_idx])))
+            tcPr.append(tcW)
+            for p in cell.paragraphs:
+                p.paragraph_format.space_before = Pt(0)
+                p.paragraph_format.space_after = Pt(0)
+                for run in p.runs:
+                    run.font.size = Pt(9)
+
+    return table
+
+
 def build_docx(pdf_path: str, output_path: str, progress_cb=None) -> dict:
     _next_id[0] = 1
     parsed = parse_pdf(pdf_path)
     doc = Document()
-    flagged_pages = []  # pages where OCR confidence was low enough to warrant review
+    flagged_pages = []
 
     for i, page in enumerate(parsed["pages"]):
         conf = page.get("ocr_confidence")
@@ -193,6 +258,15 @@ def build_docx(pdf_path: str, output_path: str, progress_cb=None) -> dict:
             h = max(y1 - y0, max_size * 1.25)
             run_elem = _line_textbox_xml(x0, y0, max(x1 - x0, 4), h, line["runs"])
             anchor_paragraph._p.append(run_elem)
+
+        for table_data in page.get("tables", []):
+            try:
+                _add_floating_table(doc, table_data)
+            except Exception as e:
+                import traceback
+                print(f"[docx_builder] FAILED to build table on page {page['number']}: {e}")
+                traceback.print_exc()
+                continue
 
         if progress_cb:
             progress_cb(i + 1, parsed["page_count"])

@@ -27,7 +27,17 @@ def _rect_area_ratio_to_page(bbox, page):
     return area / page_area if page_area > 0 else 0.0
 
 
+def _point_in_bbox(px, py, bbox, pad=1):
+    return (bbox[0] - pad) <= px <= (bbox[2] + pad) and (bbox[1] - pad) <= py <= (bbox[3] + pad)
+
+
 def _cluster_rects(rects, pad=2):
+    """
+    Connected-components clustering by pairwise rect proximity. Returns
+    each cluster's merged rect, member count, AND the member rects
+    themselves (needed by table detection to tell which lines are
+    horizontal vs vertical within one grid).
+    """
     if not rects:
         return []
     n = len(rects)
@@ -60,11 +70,110 @@ def _cluster_rects(rects, pad=2):
         rect = fitz.Rect(group[0])
         for r in group[1:]:
             rect |= r
-        clusters.append({"rect": rect, "count": len(group)})
+        clusters.append({"rect": rect, "count": len(group), "rects": group})
     return clusters
 
 
-def _get_vector_regions(page, min_area=150):
+def _classify_line_rect(r, min_length=15, max_thickness=2.5):
+    w, h = r.width, r.height
+    if w >= min_length and h <= max_thickness:
+        return "h"
+    if h >= min_length and w <= max_thickness:
+        return "v"
+    return None
+
+
+def _detect_tables(page, raw_lines):
+    """
+    Detect table grids from ruled lines (PDF vector drawing ops that are
+    long-and-thin: horizontal or vertical rules). Groups of >=2 horizontal
+    + >=2 vertical rules that intersect form a grid; text lines whose
+    center falls inside a grid cell become that cell's content.
+
+    Returns (tables, consumed_line_indices) — consumed_line_indices marks
+    which entries in raw_lines were absorbed into a table cell, so the
+    caller can exclude them from normal floating-textbox placement.
+    """
+    try:
+        drawings = page.get_drawings()
+    except Exception:
+        return [], set()
+
+    line_rects = []
+    for d in drawings:
+        r = d.get("rect")
+        if not r or r.width <= 0 or r.height <= 0:
+            continue
+        if _classify_line_rect(r):
+            line_rects.append(fitz.Rect(r))
+
+    if len(line_rects) < 4:
+        return [], set()
+
+    page_area = page.rect.width * page.rect.height
+    clusters = _cluster_rects(line_rects, pad=3)
+
+    tables = []
+    consumed_line_indices = set()
+
+    for group in clusters:
+        members = group["rects"]
+        if len(members) < 4:
+            continue
+        rect = group["rect"]
+        if (rect.get_area() / page_area if page_area > 0 else 0) > 0.9:
+            continue  # a full-page border drawn with 4 rules, not a table
+
+        h_ys, v_xs = set(), set()
+        for r in members:
+            kind = _classify_line_rect(r)
+            if kind == "h":
+                h_ys.add(round((r.y0 + r.y1) / 2, 1))
+            elif kind == "v":
+                v_xs.add(round((r.x0 + r.x1) / 2, 1))
+
+        h_ys = sorted(h_ys)
+        v_xs = sorted(v_xs)
+        if len(h_ys) < 2 or len(v_xs) < 2:
+            continue
+        rows, cols = len(h_ys) - 1, len(v_xs) - 1
+        if rows * cols < 2:
+            continue  # a single bordered box, not a real table
+
+        cells = []
+        for ri in range(rows):
+            y0, y1 = h_ys[ri], h_ys[ri + 1]
+            row_cells = []
+            for ci in range(cols):
+                x0, x1 = v_xs[ci], v_xs[ci + 1]
+                texts = []
+                for idx, line in enumerate(raw_lines):
+                    if idx in consumed_line_indices:
+                        continue
+                    lx0, ly0, lx1, ly1 = line["bbox"]
+                    cx, cy = (lx0 + lx1) / 2, (ly0 + ly1) / 2
+                    if x0 <= cx <= x1 and y0 <= cy <= y1:
+                        texts.append(" ".join(r["text"] for r in line["runs"]))
+                        consumed_line_indices.add(idx)
+                row_cells.append(" ".join(texts).strip())
+            cells.append(row_cells)
+
+        col_widths = [v_xs[i + 1] - v_xs[i] for i in range(cols)]
+        row_heights = [h_ys[i + 1] - h_ys[i] for i in range(rows)]
+
+        tables.append({
+            "bbox": [v_xs[0], h_ys[0], v_xs[-1], h_ys[-1]],
+            "rows": rows,
+            "cols": cols,
+            "col_widths": col_widths,
+            "row_heights": row_heights,
+            "cells": cells,
+        })
+
+    return tables, consumed_line_indices
+
+
+def _get_vector_regions(page, exclude_bboxes, min_area=150):
     try:
         drawings = page.get_drawings()
     except Exception:
@@ -74,24 +183,17 @@ def _get_vector_regions(page, min_area=150):
         return []
 
     page_area = page.rect.width * page.rect.height
-
-    # Drop oversized individual shapes BEFORE clustering. A single vector
-    # op covering most of the page is a background/border/watermark, not
-    # part of a chart or table. Left in, its huge rect overlaps everything
-    # else on the page and acts as a "bridge" that clustering merges into,
-    # turning "background + nearby chart" into one page-sized cluster.
     rects = [r for r in rects if (r.get_area() / page_area if page_area > 0 else 0) < 0.5]
-
-    # Also drop TINY individual shapes — dash segments from decorative
-    # dashed connector lines (e.g. arrows linking numbered sections) are
-    # each just a few square points. Left in, a chain of dash-dash-dash
-    # rects sitting close together bridges two unrelated icon clusters
-    # (and everything between them) into one oversized merged region,
-    # same mechanism as the background-bridging bug, different shape.
-    # Real icons/chart bars/table borders are all comfortably larger
-    # than this, so genuine graphics are unaffected.
     rects = [r for r in rects if r.get_area() > 9]
 
+    # Exclude anything sitting inside an already-detected table region —
+    # otherwise the same grid lines get rasterized again as a generic
+    # "chart" on top of the real table we just built.
+    def _in_excluded(r):
+        cx, cy = (r.x0 + r.x1) / 2, (r.y0 + r.y1) / 2
+        return any(_point_in_bbox(cx, cy, b) for b in exclude_bboxes)
+
+    rects = [r for r in rects if not _in_excluded(r)]
     if not rects:
         return []
 
@@ -166,9 +268,14 @@ def parse_pdf(path: str) -> dict:
                 if bbox and (bbox[2] - bbox[0]) > 1 and (bbox[3] - bbox[1]) > 1:
                     image_block_rects.append(fitz.Rect(bbox))
 
+        # --- Table detection (before general text/image processing, so
+        # cells consumed here are excluded from everything downstream) ---
+        tables, consumed_line_indices = _detect_tables(page, raw_lines)
+        table_bboxes = [t["bbox"] for t in tables]
+
         image_regions_for_render = [[r.x0, r.y0, r.x1, r.y1] for r in image_block_rects]
 
-        for region in _get_vector_regions(page):
+        for region in _get_vector_regions(page, table_bboxes):
             rbbox = [region.x0, region.y0, region.x1, region.y1]
             if any(_rects_overlap_ratio(ib, rbbox) > 0.6 for ib in image_regions_for_render):
                 continue
@@ -179,12 +286,6 @@ def parse_pdf(path: str) -> dict:
             try:
                 clip = fitz.Rect(rbbox)
                 mat = fitz.Matrix(150 / 72, 150 / 72)
-                # alpha=True keeps empty space in the clip transparent instead
-                # of opaque white. Without this, a graphic's bounding box (e.g.
-                # a decorative dashed connector spanning a large diagonal
-                # distance) renders as a solid white rectangle that visually
-                # blocks any real text sitting inside that box but outside
-                # the actual drawn shape.
                 pix = page.get_pixmap(matrix=mat, clip=clip, alpha=True)
                 images.append({
                     "bbox": rbbox,
@@ -197,7 +298,9 @@ def parse_pdf(path: str) -> dict:
 
         text_lines = []
         char_count = 0
-        for line in raw_lines:
+        for idx, line in enumerate(raw_lines):
+            if idx in consumed_line_indices:
+                continue  # absorbed into a table cell
             if any(_rects_overlap_ratio(ib, line["bbox"]) > 0.7 for ib in image_regions_for_render):
                 continue
             char_count += sum(len(r["text"]) for r in line["runs"])
@@ -207,10 +310,6 @@ def parse_pdf(path: str) -> dict:
         looks_scanned = char_count < 20 and len(images) > 0
 
         if looks_scanned and ocr_engine.is_available():
-            # Full-page-ish images are the scan itself — OCR replaces
-            # them with real text, so drop them to avoid drawing the
-            # printed text twice (once baked into the scan, once as our
-            # overlay — the same duplicate-text bug we hit with charts).
             full_page_images = [
                 img for img in images if _rect_area_ratio_to_page(img["bbox"], page) > 0.6
             ]
@@ -233,8 +332,9 @@ def parse_pdf(path: str) -> dict:
             "height": page.rect.height,
             "text_lines": text_lines,
             "images": images,
+            "tables": tables,
             "is_scanned": looks_scanned,
-            "ocr_confidence": ocr_confidence,  # None if not OCR'd
+            "ocr_confidence": ocr_confidence,
         })
 
     result = {"page_count": doc.page_count, "pages": pages_out}
