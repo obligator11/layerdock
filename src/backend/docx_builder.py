@@ -1,12 +1,3 @@
-"""
-DOCX generation engine.
-
-Consumes the structured dict produced by pdf_parser.parse_pdf() and builds
-a real .docx: text lines as positioned textboxes, images/graphics as
-positioned pictures, and now TABLES as actual editable Word table objects
-— floated to their exact page position via OOXML's tblpPr, since
-python-docx has no built-in support for absolutely positioned tables.
-"""
 import io
 from xml.sax.saxutils import escape
 

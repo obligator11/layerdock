@@ -8,9 +8,14 @@ import webview
 from backend import db
 
 
+class CancelledError(Exception):
+    pass
+
+
 class Api:
     def __init__(self):
         self._window = None
+        self._cancel_flags = {}  # job_id -> bool
         db.init_db()
 
     def set_window(self, window):
@@ -58,8 +63,13 @@ class Api:
             return {"available": False, "error": f"check_ocr crashed: {e}"}
 
     def convert_pdf(self, path, job_id):
+        self._cancel_flags[job_id] = False
         threading.Thread(target=self._convert_worker, args=(path, job_id), daemon=True).start()
         return {"ok": True, "started": True}
+
+    def cancel_conversion(self, job_id):
+        self._cancel_flags[job_id] = True
+        return {"ok": True}
 
     def _resolve_output_dir(self, source_path):
         override = db.get_setting("output_folder_override")
@@ -81,6 +91,8 @@ class Api:
             output_path = os.path.join(output_dir, base + ".docx")
 
             def progress_cb(current, total):
+                if self._cancel_flags.get(job_id):
+                    raise CancelledError("Conversion cancelled by user")
                 pct = int(current / total * 100)
                 self._window.evaluate_js(
                     f"window.onConvertProgress({json.dumps(job_id)}, {pct})"
@@ -95,11 +107,16 @@ class Api:
             self._window.evaluate_js(
                 f"window.onConvertDone({json.dumps(job_id)}, {json.dumps(result['output_path'])}, {json.dumps(flagged)})"
             )
+        except CancelledError:
+            db.add_history_entry(source_name, path, None, None, "cancelled")
+            self._window.evaluate_js(f"window.onConvertCancelled({json.dumps(job_id)})")
         except Exception as e:
             db.add_history_entry(source_name, path, None, None, "error", str(e))
             self._window.evaluate_js(
                 f"window.onConvertError({json.dumps(job_id)}, {json.dumps(str(e))})"
             )
+        finally:
+            self._cancel_flags.pop(job_id, None)
 
     def open_folder(self, path):
         try:

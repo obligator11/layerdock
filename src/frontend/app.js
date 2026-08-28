@@ -1,7 +1,8 @@
-// LayerDock frontend — Convert / History / Settings.
+// LayerDock frontend — Convert / History / Settings, with batch tracking + cancel.
 
 const state = {
-  queue: [], // {name, size, path, status, progress, outputPath}
+  queue: [], // {name, size, path, status, progress, outputPath, flaggedPages}
+  batch: null, // {total, done, succeeded, failed, cancelled, flaggedCount}
 };
 
 function el(id) { return document.getElementById(id); }
@@ -14,11 +15,51 @@ function formatSize(bytes) {
 
 function formatDate(iso) {
   try {
-    const d = new Date(iso);
-    return d.toLocaleString();
+    return new Date(iso).toLocaleString();
   } catch (e) {
     return iso;
   }
+}
+
+/* ---------- Batch summary ---------- */
+
+function renderBatchSummary() {
+  const banner = el("batchSummary");
+  if (!state.batch) {
+    banner.classList.add("hidden");
+    return;
+  }
+  const b = state.batch;
+  const stillRunning = b.done < b.total;
+
+  if (stillRunning) {
+    banner.innerHTML = `<span>Converting batch… ${b.done}/${b.total} done</span>`;
+  } else {
+    const parts = [`${b.succeeded} succeeded`];
+    if (b.failed) parts.push(`${b.failed} failed`);
+    if (b.cancelled) parts.push(`${b.cancelled} cancelled`);
+    if (b.flaggedCount) parts.push(`${b.flaggedCount} need review`);
+    banner.innerHTML = `
+      <span>Batch complete — ${parts.join(" · ")}</span>
+      <button class="btn-ghost btn-small" id="dismissBatchBtn">Dismiss</button>
+    `;
+    const dismissBtn = document.getElementById("dismissBatchBtn");
+    if (dismissBtn) dismissBtn.addEventListener("click", () => {
+      state.batch = null;
+      renderBatchSummary();
+    });
+  }
+  banner.classList.remove("hidden");
+}
+
+function batchTick(kind, flaggedCount = 0) {
+  if (!state.batch) return;
+  state.batch.done += 1;
+  if (kind === "succeeded") state.batch.succeeded += 1;
+  if (kind === "failed") state.batch.failed += 1;
+  if (kind === "cancelled") state.batch.cancelled += 1;
+  state.batch.flaggedCount += flaggedCount;
+  renderBatchSummary();
 }
 
 /* ---------- Convert view ---------- */
@@ -49,6 +90,7 @@ function renderQueue() {
     let statusLabel = "Queued";
     if (item.status === "parsing") statusLabel = "Analyzing…";
     if (item.status === "converting") statusLabel = `Converting… ${item.progress}%`;
+    if (item.status === "cancelled") statusLabel = "Cancelled";
     if (item.status === "done") {
       statusLabel = "Done";
       if (item.flaggedPages && item.flaggedPages.length) {
@@ -56,6 +98,17 @@ function renderQueue() {
       }
     }
     if (item.status === "error") statusLabel = `Error: ${item.error}`;
+
+    const isActive = item.status === "converting" || item.status === "parsing";
+
+    let actionHtml = "";
+    if (item.status === "done") {
+      actionHtml = `<button class="btn-ghost btn-small" data-action="reveal" data-index="${index}">Reveal</button>`;
+    } else if (isActive) {
+      actionHtml = `<button class="btn-ghost btn-small" data-action="cancel" data-index="${index}">Cancel</button>`;
+    } else {
+      actionHtml = `<button class="btn-primary btn-small" data-action="convert" data-index="${index}">Convert</button>`;
+    }
 
     row.innerHTML = `
       <div class="queue-item-icon">PDF</div>
@@ -69,18 +122,16 @@ function renderQueue() {
           <div class="progress-fill" style="width:${item.status === "done" ? 100 : item.progress}%"></div>
         </div>
       </div>
-      <div class="queue-item-action">
-        ${item.status === "done"
-        ? `<button class="btn-ghost btn-small" data-action="reveal" data-index="${index}">Reveal</button>`
-        : `<button class="btn-primary btn-small" data-action="convert" data-index="${index}" ${item.status === "converting" || item.status === "parsing" ? "disabled" : ""}>Convert</button>`
-      }
-      </div>
+      <div class="queue-item-action">${actionHtml}</div>
     `;
     list.appendChild(row);
   });
 
   list.querySelectorAll('[data-action="convert"]').forEach((btn) =>
     btn.addEventListener("click", () => convertFile(parseInt(btn.dataset.index)))
+  );
+  list.querySelectorAll('[data-action="cancel"]').forEach((btn) =>
+    btn.addEventListener("click", () => cancelFile(parseInt(btn.dataset.index)))
   );
   list.querySelectorAll('[data-action="reveal"]').forEach((btn) =>
     btn.addEventListener("click", () => {
@@ -100,17 +151,19 @@ function addFiles(files) {
       progress: 0,
       outputPath: null,
       error: null,
+      flaggedPages: [],
     });
   });
   renderQueue();
 }
 
-async function convertFile(index) {
+async function convertFile(index, isBatch = false) {
   const item = state.queue[index];
   if (!item.path) {
     item.status = "error";
     item.error = "No file path (drag-drop not yet supported for conversion)";
     renderQueue();
+    if (isBatch) batchTick("failed");
     return;
   }
   item.status = "parsing";
@@ -122,6 +175,7 @@ async function convertFile(index) {
     item.status = "error";
     item.error = parseRes.error;
     renderQueue();
+    if (isBatch) batchTick("failed");
     return;
   }
 
@@ -130,10 +184,21 @@ async function convertFile(index) {
   await window.pywebview.api.convert_pdf(item.path, String(index));
 }
 
+async function cancelFile(index) {
+  await window.pywebview.api.cancel_conversion(String(index));
+}
+
 async function convertAll() {
-  state.queue.forEach((item, index) => {
-    if (item.status === "queued" || item.status === "error") convertFile(index);
-  });
+  const targets = state.queue
+    .map((item, index) => ({ item, index }))
+    .filter(({ item }) => item.status === "queued" || item.status === "error" || item.status === "cancelled");
+
+  if (targets.length === 0) return;
+
+  state.batch = { total: targets.length, done: 0, succeeded: 0, failed: 0, cancelled: 0, flaggedCount: 0 };
+  renderBatchSummary();
+
+  targets.forEach(({ index }) => convertFile(index, true));
 }
 
 async function downloadAll() {
@@ -154,19 +219,33 @@ window.onConvertProgress = (jobId, pct) => {
 window.onConvertDone = (jobId, outputPath, flaggedPages) => {
   const item = state.queue[parseInt(jobId)];
   if (!item) return;
+  const wasBatchItem = state.batch !== null;
   item.status = "done";
   item.progress = 100;
   item.outputPath = outputPath;
   item.flaggedPages = flaggedPages || [];
   renderQueue();
+  if (wasBatchItem) batchTick("succeeded", item.flaggedPages.length ? 1 : 0);
 };
 
 window.onConvertError = (jobId, error) => {
   const item = state.queue[parseInt(jobId)];
   if (!item) return;
+  const wasBatchItem = state.batch !== null;
   item.status = "error";
   item.error = error;
   renderQueue();
+  if (wasBatchItem) batchTick("failed");
+};
+
+window.onConvertCancelled = (jobId) => {
+  const item = state.queue[parseInt(jobId)];
+  if (!item) return;
+  const wasBatchItem = state.batch !== null;
+  item.status = "cancelled";
+  item.progress = 0;
+  renderQueue();
+  if (wasBatchItem) batchTick("cancelled");
 };
 
 /* ---------- History view ---------- */
@@ -188,16 +267,19 @@ async function loadHistory() {
     const row = document.createElement("div");
     row.className = "queue-item";
     const ok = item.status === "done";
+    const statusClass = ok ? "status-done" : item.status === "cancelled" ? "status-cancelled" : "status-error";
+    let statusText = "Error";
+    if (ok) statusText = `${item.page_count || "?"} pages`;
+    if (item.status === "cancelled") statusText = "Cancelled";
+
     row.innerHTML = `
       <div class="queue-item-icon">PDF</div>
       <div class="queue-item-body">
         <div class="queue-item-top">
           <div class="queue-item-name">${item.source_name || "Unknown"}</div>
-          <div class="queue-item-status ${ok ? "status-done" : "status-error"}">
-            ${ok ? `${item.page_count || "?"} pages` : `Error`}
-          </div>
+          <div class="queue-item-status ${statusClass}">${statusText}</div>
         </div>
-        <div class="queue-item-meta">${formatDate(item.created_at)}${ok ? "" : ` · ${item.error || ""}`}</div>
+        <div class="queue-item-meta">${formatDate(item.created_at)}${ok ? "" : item.error ? ` · ${item.error}` : ""}${item.flagged_pages ? ` · review pages ${item.flagged_pages}` : ""}</div>
       </div>
       <div class="queue-item-action">
         ${ok ? `<button class="btn-ghost btn-small" data-reveal="${item.output_path}">Reveal</button>` : ""}
