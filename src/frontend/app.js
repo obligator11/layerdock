@@ -21,6 +21,20 @@ function formatDate(iso) {
   }
 }
 
+/* ---------- Toasts ---------- */
+
+function showToast(message, kind = "default") {
+  const stack = el("toastStack");
+  const toast = document.createElement("div");
+  toast.className = `toast${kind !== "default" ? " toast-" + kind : ""}`;
+  toast.textContent = message;
+  stack.appendChild(toast);
+  setTimeout(() => {
+    toast.classList.add("toast-out");
+    setTimeout(() => toast.remove(), 200);
+  }, 2600);
+}
+
 /* ---------- Batch summary ---------- */
 
 function renderBatchSummary() {
@@ -103,11 +117,17 @@ function renderQueue() {
 
     let actionHtml = "";
     if (item.status === "done") {
-      actionHtml = `<button class="btn-ghost btn-small" data-action="reveal" data-index="${index}">Reveal</button>`;
+      actionHtml = `
+        <button class="btn-ghost btn-small" data-action="reveal" data-index="${index}">Reveal</button>
+        <button class="btn-ghost btn-small btn-icon-danger" data-action="delete" data-index="${index}" title="Remove from queue">✕</button>
+      `;
     } else if (isActive) {
       actionHtml = `<button class="btn-ghost btn-small" data-action="cancel" data-index="${index}">Cancel</button>`;
     } else {
-      actionHtml = `<button class="btn-primary btn-small" data-action="convert" data-index="${index}">Convert</button>`;
+      actionHtml = `
+        <button class="btn-primary btn-small" data-action="convert" data-index="${index}">Convert</button>
+        <button class="btn-ghost btn-small btn-icon-danger" data-action="delete" data-index="${index}" title="Remove from queue">✕</button>
+      `;
     }
 
     row.innerHTML = `
@@ -139,6 +159,27 @@ function renderQueue() {
       if (item.outputPath) window.pywebview.api.open_folder(item.outputPath);
     })
   );
+  list.querySelectorAll('[data-action="delete"]').forEach((btn) =>
+    btn.addEventListener("click", () => deleteFile(parseInt(btn.dataset.index)))
+  );
+}
+
+function deleteFile(index) {
+  state.queue.splice(index, 1);
+  renderQueue();
+  showToast("Removed from queue");
+}
+
+function clearQueue() {
+  const anyActive = state.queue.some((i) => i.status === "converting" || i.status === "parsing");
+  if (anyActive) {
+    const proceed = confirm("Some files are still converting. Remove them from the queue anyway? (running conversions will keep saving to disk, they just won't be tracked here)");
+    if (!proceed) return;
+  }
+  state.queue = [];
+  state.batch = null;
+  renderQueue();
+  renderBatchSummary();
 }
 
 function addFiles(files) {
@@ -186,6 +227,7 @@ async function convertFile(index, isBatch = false) {
 
 async function cancelFile(index) {
   await window.pywebview.api.cancel_conversion(String(index));
+  showToast("Cancelling…");
 }
 
 async function convertAll() {
@@ -295,6 +337,7 @@ async function loadHistory() {
 async function clearHistory() {
   await window.pywebview.api.clear_history();
   loadHistory();
+  showToast("History cleared");
 }
 
 /* ---------- Settings view ---------- */
@@ -330,7 +373,10 @@ async function checkOcrStatus() {
 
 async function changeOutputFolder() {
   const res = await window.pywebview.api.choose_output_folder_override();
-  if (res.ok) loadSettings();
+  if (res.ok) {
+    loadSettings();
+    showToast("Output folder updated", "success");
+  }
 }
 
 async function resetOutputFolder() {
@@ -374,6 +420,7 @@ function wireEvents() {
   el("addMoreBtn").addEventListener("click", pickFiles);
   el("convertAllBtn").addEventListener("click", convertAll);
   el("downloadAllBtn").addEventListener("click", downloadAll);
+  el("clearQueueBtn").addEventListener("click", clearQueue);
   el("clearHistoryBtn").addEventListener("click", clearHistory);
   el("changeOutputFolderBtn").addEventListener("click", changeOutputFolder);
   el("resetOutputFolderBtn").addEventListener("click", resetOutputFolder);

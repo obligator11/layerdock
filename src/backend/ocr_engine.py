@@ -9,14 +9,43 @@ from PIL import Image
 _configured = False
 
 
+def _get_base_dir():
+    """Directory to resolve the bundled vendor/ folder from — the
+    PyInstaller extraction dir when frozen, otherwise the project's
+    src/ folder during development."""
+    if getattr(sys, "frozen", False):
+        return getattr(sys, "_MEIPASS", os.path.dirname(sys.executable))
+    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # .../src
+
+
+def _find_bundled_tesseract():
+    base = _get_base_dir()
+    candidates = [
+        os.path.join(base, "vendor", "tesseract-ocr", "tesseract.exe"),
+        os.path.join(os.path.dirname(base), "vendor", "tesseract-ocr", "tesseract.exe"),
+    ]
+    for c in candidates:
+        if os.path.exists(c):
+            return c
+    return None
+
+
 def _configure_tesseract():
     global _configured
     if _configured:
         return
     _configured = True
 
+    bundled = _find_bundled_tesseract()
+    if bundled:
+        pytesseract.pytesseract.tesseract_cmd = bundled
+        tessdata_dir = os.path.join(os.path.dirname(bundled), "tessdata")
+        if os.path.isdir(tessdata_dir):
+            os.environ["TESSDATA_PREFIX"] = tessdata_dir
+        return
+
     if shutil.which("tesseract"):
-        return  # already on PATH
+        return  # already on PATH (dev machine with a system install)
 
     if sys.platform == "win32":
         for p in (
@@ -58,7 +87,7 @@ def ocr_page(pix, dpi=250, min_confidence=40):
     line/block/paragraph numbering.
     """
     _configure_tesseract()
-    scale = 72 / dpi  # OCR pixel coords -> PDF points
+    scale = 72 / dpi
 
     img = Image.open(io.BytesIO(pix.tobytes("png")))
     data = pytesseract.image_to_data(img, output_type=pytesseract.Output.DICT)

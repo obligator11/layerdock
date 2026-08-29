@@ -1,0 +1,9 @@
+LayerDock License Agreement
+
+Copyright (c) 2026 obligator11
+
+This software is provided "as is" for the licensed user's use in
+converting PDF documents to Word format. Redistribution or resale
+without permission is prohibited.
+
+By continuing, you agree to use this software at your own risk.

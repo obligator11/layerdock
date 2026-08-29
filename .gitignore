@@ -8,3 +8,6 @@ build/
 .DS_Store
 .idea/
 .vscode/
+vendor/
+installer_output/
+*.bmp
