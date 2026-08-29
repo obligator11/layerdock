@@ -1,212 +1,138 @@
 # LayerDock
 
-**LayerDock** is a native, offline-first desktop application for converting PDFs into **editable, pixel-faithful Word documents**.
+**LayerDock** is a native, offline-first Windows desktop application that converts PDFs into **editable, pixel-faithful Word documents** — preserving text position, fonts, colors, images, charts, and tables, with OCR support for scanned pages.
 
-The goal is to preserve the original PDF's visual structure as closely as possible — including text positioning, fonts, colors, images, tables, and document layout — while producing a genuinely editable `.docx` file.
+## Download
 
-> 🚧 **Under active development:** LayerDock is currently in the early stages of development. The project scaffold and native application shell are in place; PDF-to-DOCX conversion is not implemented yet.
+Grab the latest installer from the [Releases page](https://github.com/obligator11/layerdock/releases) — `LayerDock-Setup-x.x.x.exe`. No Python, no dependencies, Tesseract OCR is bundled in.
 
-## ✨ Vision
+## Features
 
-PDFs are designed primarily for fixed-layout viewing, while Word documents are designed for editing. LayerDock aims to bridge that gap without sacrificing the original document's appearance.
+- **Pixel-perfect layout** — text, images, and charts land at their original PDF position, not reflowed
+- **Real editable tables** — detected table grids become actual Word table objects, not flattened images
+- **OCR for scanned pages** — bundled Tesseract recovers selectable text from image-only pages, fully offline
+- **Batch conversion** — queue multiple PDFs, Convert All / Download All, per-file cancel, end-of-batch summary
+- **Conversion history** — local SQLite log of every conversion, with quick access to outputs
+- **Fully offline** — no document content ever leaves your device
+- **Native app** — real installer, desktop shortcut, no browser tab
 
-The long-term goal is to support:
+## Screenshots
 
-* 📄 **Pixel-faithful PDF → DOCX conversion**
-* 📝 Editable text with preserved positioning
-* 🔤 Font and text-style preservation
-* 🎨 Text and background colors
-* 🖼️ Image extraction and placement
-* 📊 Table reconstruction
-* 🔍 OCR for scanned and image-based PDFs
-* 📴 Fully offline processing
-* 🖥️ Windows, macOS, and Linux support
-* ⚡ Native desktop experience without requiring a browser
+*(add a screenshot or two of the Convert view and a converted document here)*
 
-## 🛠️ Technology Stack
-
-LayerDock is being built entirely with Python on the backend, with a lightweight web-based UI running inside a native desktop window.
+## Technology Stack
 
 | Component       | Technology                                 |
-| --------------- | ------------------------------------------ |
-| App Shell       | [pywebview](https://pywebview.flowrl.com/) |
-| Frontend        | HTML / CSS / JavaScript                    |
-| PDF Parsing     | PyMuPDF                                    |
-| DOCX Generation | python-docx + raw OOXML                    |
-| OCR             | Tesseract + pytesseract                    |
-| Environment     | Conda / Miniconda                          |
-| Architecture    | Python backend + JS frontend               |
+| --------------- | ------------------------------------------- |
+| App Shell       | [pywebview](https://pywebview.flowrl.com/)  |
+| Frontend        | HTML / CSS / JavaScript                     |
+| PDF Parsing     | PyMuPDF                                     |
+| DOCX Generation | python-docx + raw OOXML                     |
+| OCR             | Tesseract + pytesseract (bundled)           |
+| Local Storage   | SQLite                                      |
+| Packaging       | PyInstaller + Inno Setup                    |
 
-## 🚧 Development Status
+## Development Status
 
-**Current stage: Step 1 of 8 — Project Scaffold & App Shell**
+Core conversion engine and native packaging are complete and working. Remaining polish items are tracked in [`docs/ROADMAP.md`](docs/ROADMAP.md).
 
-The project is intentionally under construction.
+### Done
+- [x] Native app shell (pywebview) with custom UI
+- [x] PDF parsing (text, images, vector graphics, tables)
+- [x] DOCX generation with absolute positioning
+- [x] Image & chart embedding (rasterized, correctly placed)
+- [x] Real editable Word tables
+- [x] OCR for scanned/image-only pages
+- [x] Batch queue: convert all, download all, cancel, delete, history
+- [x] Local SQLite history + settings
+- [x] Windows installer with bundled Tesseract, desktop shortcut, branded wizard
 
-### Completed
+### In progress
+- [ ] Side-by-side PDF vs. DOCX review UI with automated visual-diff flagging
+- [ ] macOS / Linux packaging
+- [ ] Code signing
 
-* [x] Initial project structure
-* [x] Conda environment configuration
-* [x] Native application shell
-* [x] Initial frontend UI
-* [x] Python ↔ JavaScript bridge foundation
+## Running from source (for development)
 
-### In Progress
-
-* [ ] PDF document parsing
-* [ ] Layout and typography extraction
-* [ ] DOCX document reconstruction
-* [ ] Image extraction and positioning
-* [ ] Table reconstruction
-* [ ] OCR pipeline
-* [ ] Advanced formatting preservation
-* [ ] Cross-platform packaging
-* [ ] End-to-end conversion pipeline
-* [ ] Testing and optimization
-
-See [`docs/ROADMAP.md`](docs/ROADMAP.md) for the complete development plan.
-
-## 📁 Project Structure
-
-```text
-layerdock/
-├── src/
-│   ├── main.py                 # Application entry point
-│   ├── backend/
-│   │   ├── api.py              # JavaScript ↔ Python bridge
-│   │   ├── pdf_parser.py       # PDF parsing and layout extraction
-│   │   ├── docx_builder.py     # DOCX generation and reconstruction
-│   │   └── ocr_engine.py       # OCR processing
-│   └── frontend/
-│       ├── index.html           # Application UI
-│       ├── style.css            # UI styling
-│       └── app.js               # Frontend logic
-├── docs/
-│   └── ROADMAP.md              # Development roadmap
-├── environment.yml             # Conda environment specification
-├── requirements.txt             # Python dependencies
-└── README.md
-```
-
-## 🚀 Running Locally
-
-LayerDock currently uses **Anaconda/Miniconda** for environment management.
-
-### 1. Clone the repository
+LayerDock uses **Anaconda/Miniconda** for environment management.
 
 ```bash
 git clone https://github.com/obligator11/layerdock.git
 cd layerdock
-```
-
-### 2. Create the environment
-
-```bash
 conda env create -f environment.yml
-```
-
-### 3. Activate it
-
-```bash
 conda activate layerdock
-```
-
-### 4. Start the application
-
-```bash
 cd src
 python main.py
 ```
 
-### Updating dependencies
-
-If `requirements.txt` changes after the environment has already been created:
-
+If `requirements.txt` changes after the environment already exists:
 ```bash
 conda activate layerdock
 pip install -r requirements.txt
 ```
 
-### Linux requirements
+### OCR (scanned PDFs) — dev only
 
-`pywebview` requires a system WebView backend.
+The packaged installer bundles Tesseract automatically. When running from source, install it separately:
+- **Windows:** [UB-Mannheim build](https://github.com/UB-Mannheim/tesseract/wiki) (default install path works out of the box)
+- **macOS:** `brew install tesseract`
+- **Linux:** `sudo apt install tesseract-ocr`
 
-On Debian/Ubuntu-based distributions, you may need:
+Check **Settings → OCR engine (Tesseract)** in the app to confirm detection.
+
+### Linux (dev) — pywebview backend
 
 ```bash
 sudo apt install python3-gi gir1.2-webkit2-4.1
 ```
+Exact packages vary by distro.
 
-The exact packages may vary depending on your Linux distribution.
+## Building the installer yourself
 
-## 🔬 Core Engineering Challenge
+```bash
+pip install pyinstaller
+pyinstaller layerdock.spec --clean --noconfirm
+# then compile installer.iss with Inno Setup (https://jrsoftware.org/isdl.php)
+```
+Output lands in `installer_output/LayerDock-Setup-x.x.x.exe`.
 
-The difficult part of LayerDock isn't simply extracting text from a PDF.
-
-The main challenge is reconstructing the **visual and structural relationships** inside a fixed-layout document and translating them into an editable Word document.
-
-A successful conversion needs to reason about things such as:
-
-* Text coordinates and bounding boxes
-* Font families and sizes
-* Font weight and styling
-* Line spacing and paragraph structure
-* Relative positioning
-* Images and their placement
-* Tables and cell boundaries
-* Colors and backgrounds
-* Multiple columns
-* Headers and footers
-* Overlapping elements
-* Scanned pages requiring OCR
-
-LayerDock therefore treats PDF conversion as a **document reconstruction problem**, rather than a simple text extraction task.
-
-## 🔒 Offline-First
-
-LayerDock is designed around local processing.
-
-Documents are intended to remain on the user's machine during conversion, making the application suitable for documents where privacy and confidentiality matter.
-
-No cloud-based conversion service is required for the core pipeline.
-
-## 🗺️ Roadmap
-
-LayerDock is being developed incrementally:
+## Project Structure
 
 ```text
-Step 1  → Project Scaffold & App Shell       🚧
-Step 2  → PDF Parsing & Layout Extraction    ⏳
-Step 3  → DOCX Reconstruction                ⏳
-Step 4  → OCR Pipeline                       ⏳
-Step 5  → Advanced Layout Preservation       ⏳
-Step 6  → Conversion Quality & Edge Cases    ⏳
-Step 7  → Testing & Cross-Platform Support   ⏳
-Step 8  → Packaging & Release                ⏳
+layerdock/
+├── src/
+│   ├── main.py
+│   ├── backend/
+│   │   ├── api.py
+│   │   ├── pdf_parser.py
+│   │   ├── docx_builder.py
+│   │   ├── ocr_engine.py
+│   │   └── db.py
+│   └── frontend/
+│       ├── index.html
+│       ├── style.css
+│       ├── app.js
+│       └── assets/
+├── vendor/                 # bundled Tesseract (not tracked in git)
+├── docs/ROADMAP.md
+├── layerdock.spec           # PyInstaller build config
+├── installer.iss            # Inno Setup installer script
+├── environment.yml
+└── requirements.txt
 ```
 
-The roadmap will evolve as the conversion engine is developed and real-world PDF edge cases are addressed.
+## Why this is hard
 
-## 📌 Current Limitations
+PDFs are fixed-layout; Word documents are structured for editing. LayerDock treats conversion as a **document reconstruction problem**: recovering text position/font/color, distinguishing real tables from decorative graphics, telling backgrounds apart from content, and rebuilding all of it as genuinely editable Word objects rather than a flattened picture of the page.
 
-Because LayerDock is still under construction:
+## Privacy
 
-* PDF conversion is **not available yet**
-* OCR is **not implemented yet**
-* DOCX reconstruction is **not implemented yet**
-* Cross-platform packaging is **not ready**
-* API and internal architecture may change during development
+All processing happens locally. No document content is uploaded anywhere, with or without an internet connection.
 
-## 🤝 Contributing
+## License
 
-LayerDock is currently in an early development phase. The architecture and APIs are expected to change significantly as the core conversion engine is implemented.
-
-Contributions, ideas, bug reports, and technical discussion will become increasingly useful as the project approaches a functional release.
-
-## 📄 License
-
-License information will be added as the project approaches its first public release.
+License information will be added ahead of the first public release.
 
 ---
 
-**LayerDock** — *Turning fixed-layout PDFs into editable documents without losing the layout.*
+**LayerDock** — pixel-perfect PDFs, without losing the ability to edit them.
