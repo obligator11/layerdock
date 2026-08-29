@@ -1,138 +1,73 @@
+<div align="center">
+
 # LayerDock
 
-**LayerDock** is a native, offline-first Windows desktop application that converts PDFs into **editable, pixel-faithful Word documents** — preserving text position, fonts, colors, images, charts, and tables, with OCR support for scanned pages.
+**Convert PDFs into fully editable Word documents — without losing the layout.**
 
-## Download
+[![Download](https://img.shields.io/badge/download-latest%20release-7c5cff)](https://github.com/obligator11/layerdock/releases/latest)
+[![Platform](https://img.shields.io/badge/platform-Windows-blue)]()
+[![Offline](https://img.shields.io/badge/processing-100%25%20offline-34e08a)]()
 
-Grab the latest installer from the [Releases page](https://github.com/obligator11/layerdock/releases) — `LayerDock-Setup-x.x.x.exe`. No Python, no dependencies, Tesseract OCR is bundled in.
-
-## Features
-
-- **Pixel-perfect layout** — text, images, and charts land at their original PDF position, not reflowed
-- **Real editable tables** — detected table grids become actual Word table objects, not flattened images
-- **OCR for scanned pages** — bundled Tesseract recovers selectable text from image-only pages, fully offline
-- **Batch conversion** — queue multiple PDFs, Convert All / Download All, per-file cancel, end-of-batch summary
-- **Conversion history** — local SQLite log of every conversion, with quick access to outputs
-- **Fully offline** — no document content ever leaves your device
-- **Native app** — real installer, desktop shortcut, no browser tab
-
-## Screenshots
-
-*(add a screenshot or two of the Convert view and a converted document here)*
-
-## Technology Stack
-
-| Component       | Technology                                 |
-| --------------- | ------------------------------------------- |
-| App Shell       | [pywebview](https://pywebview.flowrl.com/)  |
-| Frontend        | HTML / CSS / JavaScript                     |
-| PDF Parsing     | PyMuPDF                                     |
-| DOCX Generation | python-docx + raw OOXML                     |
-| OCR             | Tesseract + pytesseract (bundled)           |
-| Local Storage   | SQLite                                      |
-| Packaging       | PyInstaller + Inno Setup                    |
-
-## Development Status
-
-Core conversion engine and native packaging are complete and working. Remaining polish items are tracked in [`docs/ROADMAP.md`](docs/ROADMAP.md).
-
-### Done
-- [x] Native app shell (pywebview) with custom UI
-- [x] PDF parsing (text, images, vector graphics, tables)
-- [x] DOCX generation with absolute positioning
-- [x] Image & chart embedding (rasterized, correctly placed)
-- [x] Real editable Word tables
-- [x] OCR for scanned/image-only pages
-- [x] Batch queue: convert all, download all, cancel, delete, history
-- [x] Local SQLite history + settings
-- [x] Windows installer with bundled Tesseract, desktop shortcut, branded wizard
-
-### In progress
-- [ ] Side-by-side PDF vs. DOCX review UI with automated visual-diff flagging
-- [ ] macOS / Linux packaging
-- [ ] Code signing
-
-## Running from source (for development)
-
-LayerDock uses **Anaconda/Miniconda** for environment management.
-
-```bash
-git clone https://github.com/obligator11/layerdock.git
-cd layerdock
-conda env create -f environment.yml
-conda activate layerdock
-cd src
-python main.py
-```
-
-If `requirements.txt` changes after the environment already exists:
-```bash
-conda activate layerdock
-pip install -r requirements.txt
-```
-
-### OCR (scanned PDFs) — dev only
-
-The packaged installer bundles Tesseract automatically. When running from source, install it separately:
-- **Windows:** [UB-Mannheim build](https://github.com/UB-Mannheim/tesseract/wiki) (default install path works out of the box)
-- **macOS:** `brew install tesseract`
-- **Linux:** `sudo apt install tesseract-ocr`
-
-Check **Settings → OCR engine (Tesseract)** in the app to confirm detection.
-
-### Linux (dev) — pywebview backend
-
-```bash
-sudo apt install python3-gi gir1.2-webkit2-4.1
-```
-Exact packages vary by distro.
-
-## Building the installer yourself
-
-```bash
-pip install pyinstaller
-pyinstaller layerdock.spec --clean --noconfirm
-# then compile installer.iss with Inno Setup (https://jrsoftware.org/isdl.php)
-```
-Output lands in `installer_output/LayerDock-Setup-x.x.x.exe`.
-
-## Project Structure
-
-```text
-layerdock/
-├── src/
-│   ├── main.py
-│   ├── backend/
-│   │   ├── api.py
-│   │   ├── pdf_parser.py
-│   │   ├── docx_builder.py
-│   │   ├── ocr_engine.py
-│   │   └── db.py
-│   └── frontend/
-│       ├── index.html
-│       ├── style.css
-│       ├── app.js
-│       └── assets/
-├── vendor/                 # bundled Tesseract (not tracked in git)
-├── docs/ROADMAP.md
-├── layerdock.spec           # PyInstaller build config
-├── installer.iss            # Inno Setup installer script
-├── environment.yml
-└── requirements.txt
-```
-
-## Why this is hard
-
-PDFs are fixed-layout; Word documents are structured for editing. LayerDock treats conversion as a **document reconstruction problem**: recovering text position/font/color, distinguishing real tables from decorative graphics, telling backgrounds apart from content, and rebuilding all of it as genuinely editable Word objects rather than a flattened picture of the page.
-
-## Privacy
-
-All processing happens locally. No document content is uploaded anywhere, with or without an internet connection.
-
-## License
-
-License information will be added ahead of the first public release.
+</div>
 
 ---
 
-**LayerDock** — pixel-perfect PDFs, without losing the ability to edit them.
+## What it does
+
+Open any PDF in LayerDock and get back a `.docx` file where the text, images, charts, and tables sit exactly where they did in the original — and every one of them is a real, editable Word object, not a flattened screenshot of the page.
+
+That distinction is the entire point of this app. Most converters either mangle your layout to make the text editable, or preserve the layout by turning everything into pictures you can't touch. LayerDock does neither: it rebuilds the document.
+
+## Get it
+
+**[Download the installer](https://github.com/obligator11/layerdock/releases/latest)** — one file, no setup required. OCR support is built in; nothing else to install.
+
+Run the installer, keep the desktop shortcut checked, launch LayerDock, and you're converting.
+
+## How to use it
+
+1. Drop a PDF onto the window, or click **Select PDF files**
+2. Hit **Convert** — or add several files and hit **Convert All**
+3. Find the finished `.docx` in the output folder next to your source file (or click **Reveal**)
+
+That's it. No accounts, no upload step, no internet required at any point.
+
+## What makes it different
+
+**Real tables, not pictures of tables.** LayerDock detects a table's actual grid — rows, columns, cell boundaries — and rebuilds it as a genuine Word table. Click into any cell and edit it like you would in any document you typed yourself.
+
+**Charts and images land in the right spot.** Every graphic is placed at its exact original coordinates, sized correctly, and layered so it never blocks text sitting near or under it.
+
+**Scanned pages get real text back.** Feed it an image-only PDF and LayerDock runs OCR locally to recover selectable, editable text — no picture-of-text left behind, and pages where the recognition was uncertain get flagged so you know exactly what to double-check.
+
+**Everything stays on your machine.** There's no server in this pipeline. Parsing, conversion, and OCR all happen locally. Nothing about your documents is ever transmitted anywhere.
+
+**Built for volume.** Queue up a folder of PDFs, convert the whole batch, track progress per file, cancel anything that's taking too long, and get a summary the moment it's done.
+
+## Screenshots
+
+*(drop a couple of screenshots here — the Convert screen with a batch running, and a before/after of a converted document)*
+
+## System requirements
+
+Windows 10 or later, 64-bit. Nothing else — the installer includes everything the app needs to run standalone.
+
+## Privacy
+
+LayerDock has no network calls in its conversion pipeline. Your PDFs never leave your computer, whether or not you're connected to the internet.
+
+## Feedback and issues
+
+Found a document that doesn't convert cleanly, or hit a bug? Open an issue on this repo with the general nature of the file (scanned, has tables, multi-column, etc.) — real-world PDFs are wildly inconsistent, and edge cases are how this gets better.
+
+## License
+
+See [LICENSE.txt](LICENSE.txt).
+
+---
+
+<div align="center">
+
+Built for people who need their PDFs back as documents they can actually work with.
+
+</div>
